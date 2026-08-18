@@ -1,0 +1,9 @@
+name: crocus
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pyarrow=20
+  - pytest=8
+  - pip
+  - pip:

@@ -216,3 +216,20 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local and generated CROCUS data
+.DS_Store
+
+*.sqlite
+*.sqlite-*
+*.tsm
+*.tar.gz
+*.lp
+*.lp.gz
+*.parquet
+
+catalog/
+crocus-rework-output/
+_inventory_work/
+_export_work/
+*.log
