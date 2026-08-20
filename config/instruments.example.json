@@ -3,11 +3,10 @@
     {
       "instrument_id": "w08e-vaisala-wxt536-core",
       "match": {
-        "node": "000048b02d35a87e",
+        "vsn": "W08E",
         "sensor": "vaisala-wxt536",
         "zone": "core"
       }
     }
   ]
 }
-

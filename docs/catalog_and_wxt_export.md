@@ -2,11 +2,17 @@
 
 ## Overview
 
-The workflow has two commands:
+The recommended workflow is selective export:
 
-- `crocus-inventory` reads TSM indexes and creates instrument and variable lists.
-- `crocus-export` runs daily `influxd inspect export-lp` streams and writes
-  instrument/hour Parquet through the existing converter.
+- `crocus-export --selection-file` discovers selected measurements per staged
+  shard, applies field and arbitrary tag filters while streaming, and writes
+  sensor/VSN/instrument/day Parquet.
+- `crocus-inventory` remains available for optional exhaustive discovery, but it
+  is not required for selective extraction.
+
+See `docs/selective_export.md` for the primary workflow, selection format, Hive
+layout, restart behavior, and Mac/HPC commands. The catalog workflow below is
+retained for users who explicitly need a complete bucket-wide inventory.
 
 The inventory command never requests `dump-tsm --blocks` or `dump-tsm --all`.
 Backup archives still have to be decompressed because each TSM index is stored
@@ -99,14 +105,13 @@ crocus-export \
   --workers 1
 ```
 
-Backup mode stages one weekly shard, processes its requested days, and removes
-the staged engine before moving to the next shard. All WXT measurements are
-passed to one daily `export-lp` invocation. Line protocol is read from stdout
-and is never retained.
+Backup mode stages one shard, exports the requested interval in that shard once,
+and removes the staged engine before moving to the next shard. Line protocol is
+read from stdout and is never retained.
 
-The converter removes the inclusive next-midnight row reported by InfluxDB and
-filters rows using `wxt_instruments.txt`. Completed compatible partitions are
-skipped on a rerun.
+The converter removes the inclusive range-end row reported by InfluxDB and
+filters rows using `wxt_instruments.txt`. New exports use the metadata-versioned
+sensor/VSN/instrument/day layout; the selection-file workflow is preferred.
 
 ## Run on the production engine
 
@@ -139,9 +144,9 @@ crocus-export \
   --workers 1
 ```
 
-Do not start with eight workers. Both workers would scan the same TSM files.
-Increase to `--workers 2` only after measuring storage throughput; larger values
-are rejected.
+Start with one worker. In backup mode, additional workers process independent
+shards, but increase decompression, temporary-space, memory, and filesystem I/O.
+Benchmark 2 and 4 before using the supported maximum of 8.
 
 ## Completion checks
 

@@ -9,12 +9,13 @@ from crocus_raw.backup import load_backup_bucket
 from crocus_raw.exporter import ExportConfig, export_backup_range, export_engine_range
 from crocus_raw.instruments import InstrumentResolver
 from crocus_raw.runtime import validate_influxd
+from crocus_raw.selection import Selection
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="crocus-export",
-        description="Stream daily InfluxDB exports directly into instrument/hour Parquet.",
+        description="Stream selective InfluxDB shards into sensor/VSN/instrument/day Parquet.",
     )
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--backup-dir", type=Path)
@@ -23,14 +24,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--bucket-name", default="waggle")
     parser.add_argument("--start-date", required=True, type=date.fromisoformat)
     parser.add_argument("--end-date", required=True, type=date.fromisoformat)
-    parser.add_argument("--measurement-file", required=True, type=Path)
-    parser.add_argument("--instrument-file", required=True, type=Path)
+    selection = parser.add_mutually_exclusive_group(required=True)
+    selection.add_argument("--selection-file", type=Path)
+    selection.add_argument("--measurement-file", type=Path)
+    parser.add_argument("--instrument-file", type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--work-dir", type=Path)
     parser.add_argument("--influxd", required=True, type=Path)
     parser.add_argument("--source-snapshot")
     parser.add_argument("--instrument-registry", type=Path)
-    parser.add_argument("--workers", type=int, choices=(1, 2), default=1)
+    parser.add_argument("--workers", type=int, choices=range(1, 9), default=1)
     parser.add_argument("--rows-per-file", type=int, default=500_000)
     parser.add_argument("--max-buffer-rows", type=int, default=1_000_000)
     parser.add_argument("--on-existing", choices=("error", "skip"), default="skip")
@@ -40,12 +43,24 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     arguments = build_parser().parse_args(argv)
     influxd_version = validate_influxd(arguments.influxd)
-    measurements = tuple(sorted(_read_list(arguments.measurement_file)))
-    instruments = frozenset(_read_list(arguments.instrument_file))
-    if not measurements:
-        raise SystemExit("measurement file is empty")
-    if not instruments:
-        raise SystemExit("instrument file is empty")
+    if arguments.selection_file:
+        if arguments.instrument_file:
+            raise SystemExit("--instrument-file cannot be used with --selection-file")
+        try:
+            selection = Selection.from_json(arguments.selection_file)
+        except (OSError, ValueError) as error:
+            raise SystemExit(str(error)) from error
+        instruments = None
+    else:
+        if not arguments.instrument_file:
+            raise SystemExit("--instrument-file is required with --measurement-file")
+        measurements = _read_list(arguments.measurement_file)
+        instruments = frozenset(_read_list(arguments.instrument_file))
+        if not measurements:
+            raise SystemExit("measurement file is empty")
+        if not instruments:
+            raise SystemExit("instrument file is empty")
+        selection = Selection.from_measurements(measurements)
     resolver = (
         InstrumentResolver.from_json(arguments.instrument_registry)
         if arguments.instrument_registry
@@ -71,7 +86,7 @@ def main(argv: list[str] | None = None) -> int:
         bucket_name=bucket_name,
         output_dir=arguments.output,
         source_snapshot=source_snapshot,
-        measurements=measurements,
+        selection=selection,
         allowed_instruments=instruments,
         resolver=resolver,
         workers=arguments.workers,

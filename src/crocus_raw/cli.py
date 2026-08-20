@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import gzip
+import hashlib
 import json
 import sys
 import uuid
@@ -11,13 +12,14 @@ from pathlib import Path
 
 from crocus_raw.converter import convert_stream
 from crocus_raw.instruments import InstrumentResolver
-from crocus_raw.writer import HourlyDatasetWriter, WriterConfig
+from crocus_raw.selection import Selection
+from crocus_raw.writer import DailyDatasetWriter, WriterConfig
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="crocus-raw",
-        description="Stream one UTC day of Influx line protocol into instrument/hour Parquet datasets.",
+        description="Stream one UTC day of Influx line protocol into sensor/VSN/instrument/day Parquet.",
     )
     parser.add_argument("--date", required=True, type=date.fromisoformat)
     parser.add_argument("--input", default="-", help="Line protocol path, .gz path, or - for stdin")
@@ -26,6 +28,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--bucket", default="waggle")
     parser.add_argument("--instrument-registry", type=Path)
     parser.add_argument("--instrument-allowlist", type=Path)
+    parser.add_argument("--selection-file", type=Path)
     parser.add_argument("--influxd-version")
     parser.add_argument("--require-registry", action="store_true")
     parser.add_argument("--rows-per-file", type=int, default=500_000)
@@ -46,13 +49,22 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("--require-registry requires --instrument-registry")
 
     run_id = arguments.run_id or _new_run_id()
-    writer = HourlyDatasetWriter(
+    try:
+        selection = Selection.from_json(arguments.selection_file) if arguments.selection_file else None
+    except (OSError, ValueError) as error:
+        raise SystemExit(str(error)) from error
+    writer = DailyDatasetWriter(
         WriterConfig(
             output_root=arguments.output,
             run_id=run_id,
             source_snapshot=arguments.source_snapshot,
             bucket=arguments.bucket,
             registry_fingerprint=resolver.fingerprint,
+            selection_fingerprint=(
+                selection.fingerprint
+                if selection is not None
+                else hashlib.sha256(b"unfiltered").hexdigest()
+            ),
             influxd_version=arguments.influxd_version,
             rows_per_file=arguments.rows_per_file,
             max_buffer_rows=arguments.max_buffer_rows,
@@ -60,17 +72,24 @@ def main(argv: list[str] | None = None) -> int:
         )
     )
 
-    with _open_input(arguments.input) as stream:
-        allowed_instruments = (
-            _read_allowlist(arguments.instrument_allowlist) if arguments.instrument_allowlist else None
-        )
-        summary = convert_stream(
-            stream,
-            arguments.date,
-            resolver,
-            writer,
-            allowed_instrument_ids=allowed_instruments,
-        )
+    try:
+        with _open_input(arguments.input) as stream:
+            allowed_instruments = (
+                _read_allowlist(arguments.instrument_allowlist)
+                if arguments.instrument_allowlist
+                else None
+            )
+            summary = convert_stream(
+                stream,
+                arguments.date,
+                resolver,
+                writer,
+                selection=selection,
+                allowed_instrument_ids=allowed_instruments,
+            )
+    except Exception:
+        writer.abort()
+        raise
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0
 

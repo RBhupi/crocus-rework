@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "crocus-raw"
-version = "0.2.0"
-description = "Streaming InfluxDB line protocol to instrument/hour Parquet datasets"
+version = "0.5.0"
+description = "Selective streaming of InfluxDB data to sensor/VSN/instrument/day Parquet datasets"
 requires-python = ">=3.11"
 dependencies = [
   "pyarrow>=20,<22",

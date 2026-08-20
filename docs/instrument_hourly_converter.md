@@ -1,35 +1,36 @@
-# Instrument/hour converter
+# Sensor/VSN/instrument/day converter
 
-For the complete index catalog and direct WXT export commands, see
-`docs/catalog_and_wxt_export.md`.
+For the recommended selective export workflow, see `docs/selective_export.md`.
 
 ## Purpose
 
 The prototype reads one UTC day of InfluxDB line protocol exactly once and
-routes records into immutable hourly Parquet datasets for stable instruments.
+routes records into immutable daily Parquet datasets by sensor, authoritative
+VSN, and stable instrument.
 It does not load a day into memory and does not append to existing Parquet
 files.
 
 Output layout:
 
 ```text
-schema_version=1/
-  instrument=<instrument-id>/
-    date=YYYY-MM-DD/
-      hour=HH/
-        part-00000.parquet
-        _manifest.json
+facts/
+  sensor=<sensor>/
+    vsn=<Wxxx>/
+      instrument=<instrument-id>/
+        date=YYYY-MM-DD/
+          part-00000.parquet
+          _manifest.json
 ```
 
 Buffers are bounded globally. Full buffers become new `part-*.parquet` files.
-Completed hour directories are published from a run-specific staging tree only
+Completed daily directories are published from a run-specific staging tree only
 after all records have been parsed and written successfully.
 
 ## Environment
 
 ```bash
 mamba env create -f environment.yml
-mamba activate crocus-raw
+mamba activate crocus
 ```
 
 For an existing environment:
@@ -44,8 +45,8 @@ Use an explicit registry for production. Rules match an exact subset of tags;
 the first matching rule supplies the stable instrument ID. See
 `config/instruments.example.json`.
 
-Without a match, the prototype derives a deterministic fallback from node,
-sensor/task/device, and zone. Plugin version is deliberately excluded. Use
+Without a match, the converter derives a deterministic fallback from VSN,
+sensor/task/device, zone, and device identity. Plugin version is deliberately excluded. Use
 `--require-registry` to reject every unmatched point.
 
 ## Convert an existing export
@@ -81,8 +82,8 @@ influxd inspect export-lp \
     --require-registry
 ```
 
-Do not launch 24 hourly `influxd` exports. The converter creates hour
-partitions while consuming one daily stream, avoiding 24 repeated TSM scans.
+Do not launch 24 hourly `influxd` exports. The converter creates daily
+partitions while consuming one daily stream, avoiding repeated TSM scans.
 
 ## WXT compatibility
 
@@ -93,14 +94,14 @@ that may be enabled in later exports. Do not hard-code only the first three:
 the converter accepts every WXT measurement and keeps the measurement name in
 each row.
 
-The example's WXT tags are `host`, `missing`, `node`, `plugin`, `sensor`,
+The source WXT tags include `host`, `missing`, a numeric location tag, `plugin`, `sensor`,
 `task`, `units`, `vsn`, and `zone`; some archive records also contain `job`.
-All tags are retained in the `tags` map and these common tags are also promoted
-to nullable columns. In particular, `missing` remains a string so downstream
-QA/QC can interpret the instrument-specific sentinel without modifying raw
-values.
+The numeric location tag is discarded. Other tags are stored once per
+`series_id` in `_series`; fact rows keep only required identity and value
+columns. In particular, `missing` remains a string in series metadata so
+downstream QA/QC can interpret the instrument-specific sentinel.
 
-Use `node` + `sensor` + `zone` as the WXT registry match. Do not include
+Use `vsn` + `sensor` + `zone` as the WXT registry match. Do not include
 `plugin`, `job`, or `host` in instrument identity because software versions,
 runs, and host naming can change while the physical instrument remains the
 same. The example registry follows this rule.
@@ -112,13 +113,13 @@ known in advance.
 
 ## Restart behavior
 
-The default is to fail if any target hour already exists. `--on-existing skip`
-skips a completed hour only when its source snapshot, bucket, schema version,
-converter version, and registry fingerprint match. Incomplete or incompatible
+The default is to fail if any target day partition already exists. `--on-existing skip`
+skips a completed partition only when its source snapshot, bucket, schema version,
+converter version, registry fingerprint, and selection fingerprint match. Incomplete or incompatible
 partitions always fail.
 
-Failed runs remain under `schema_version=1/_staging/<run-id>` for diagnosis.
-They are never mixed with completed partitions.
+Failed `crocus-export` staging is removed. Published partitions are never mixed
+with incomplete staging and are recovered through the daily completion marker.
 
 ## Current boundary
 

@@ -470,7 +470,7 @@ def _rebuild_resolved_series(connection: sqlite3.Connection, resolver: Instrumen
             identity_source TEXT NOT NULL,
             confidence TEXT NOT NULL,
             review_required INTEGER NOT NULL,
-            identity_node TEXT NOT NULL,
+            identity_vsn TEXT NOT NULL,
             identity_kind TEXT NOT NULL,
             identity_zone TEXT NOT NULL,
             measurement TEXT NOT NULL,
@@ -494,6 +494,8 @@ def _rebuild_resolved_series(connection: sqlite3.Connection, resolver: Instrumen
     batch: list[tuple[object, ...]] = []
     for series_hash, measurement, field, tags_json, minimum, maximum, entries in select_cursor:
         tags = json.loads(tags_json)
+        tags.pop("node", None)
+        tags_json = json.dumps(tags, separators=(",", ":"), sort_keys=True)
         point = InfluxPoint(0, measurement, field, ParsedValue("float64", 0.0), tags)
         identity = resolver.resolve_identity(point)
         batch.append(
@@ -503,7 +505,7 @@ def _rebuild_resolved_series(connection: sqlite3.Connection, resolver: Instrumen
                 identity.identity_source,
                 identity.confidence,
                 int(identity.review_required),
-                identity.node,
+                identity.vsn,
                 identity.kind,
                 identity.zone,
                 measurement,
@@ -534,18 +536,18 @@ def _rebuild_resolved_series(connection: sqlite3.Connection, resolver: Instrumen
 def _write_instruments(connection: sqlite3.Connection, path: Path) -> None:
     query = """
         SELECT instrument_id, identity_source, confidence, review_required,
-               identity_node, identity_kind, identity_zone,
+               identity_vsn, identity_kind, identity_zone,
                MIN(minimum_time_ns), MAX(maximum_time_ns), COUNT(*),
                COUNT(DISTINCT measurement || char(0) || field)
         FROM resolved_series
         GROUP BY instrument_id, identity_source, confidence, review_required,
-                 identity_node, identity_kind, identity_zone
+                 identity_vsn, identity_kind, identity_zone
         ORDER BY instrument_id
     """
     _write_csv(
         path,
         [
-            "instrument_id", "identity_source", "confidence", "review_required", "node",
+            "instrument_id", "identity_source", "confidence", "review_required", "vsn",
             "kind", "zone", "first_time", "last_time", "raw_series_count", "variable_count",
         ],
         (
