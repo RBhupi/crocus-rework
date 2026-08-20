@@ -1,0 +1,71 @@
+{
+  "selection_version": 1,
+  "selectors": [
+    {
+      "measurement": "wxt.env.humidity",
+      "tags": {
+        "sensor": ["vaisala-wxt536"]
+      }
+    },
+    {
+      "measurement": "wxt.env.pressure",
+      "tags": {
+        "sensor": ["vaisala-wxt536"]
+      }
+    },
+    {
+      "measurement": "wxt.env.temp",
+      "tags": {
+        "sensor": ["vaisala-wxt536"]
+      }
+    },
+    {
+      "measurement": "wxt.hail.accumulation",
+      "tags": {
+        "sensor": ["vaisala-wxt536"]
+      }
+    },
+    {
+      "measurement": "wxt.heater.status",
+      "tags": {
+        "sensor": ["vaisala-wxt536"]
+      }
+    },
+    {
+      "measurement": "wxt.heater.temp",
+      "tags": {
+        "sensor": ["vaisala-wxt536"]
+      }
+    },
+    {
+      "measurement": "wxt.heater.volt",
+      "tags": {
+        "sensor": ["vaisala-wxt536"]
+      }
+    },
+    {
+      "measurement": "wxt.rain.accumulation",
+      "tags": {
+        "sensor": ["vaisala-wxt536"]
+      }
+    },
+    {
+      "measurement": "wxt.voltage.supply",
+      "tags": {
+        "sensor": ["vaisala-wxt536"]
+      }
+    },
+    {
+      "measurement": "wxt.wind.direction",
+      "tags": {
+        "sensor": ["vaisala-wxt536"]
+      }
+    },
+    {
+      "measurement": "wxt.wind.speed",
+      "tags": {
+        "sensor": ["vaisala-wxt536"]
+      }
+    }
+  ]
+}

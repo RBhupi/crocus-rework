@@ -1,0 +1,16 @@
+{
+  "selection_version": 2,
+  "selectors": [
+    {
+      "measurement_glob": "*",
+      "tags": {
+        "sensor": [
+          "vaisala-wxt536"
+        ],
+        "vsn": [
+          "W*"
+        ]
+      }
+    }
+  ]
+}

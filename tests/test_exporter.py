@@ -235,8 +235,8 @@ def test_export_reports_metadata_conflicts_for_same_sensor_variable(tmp_path):
     influxd = tmp_path / "influxd"
     influxd.write_text(
         f"""#!/bin/sh
-printf '%s\\n' 'wxt.env.temp,sensor=vaisala-wxt536,units=celsius,vsn=W001 value=2.5 {DAY_START + 1}'
-printf '%s\\n' 'wxt.env.temp,sensor=vaisala-wxt536,units=fahrenheit,vsn=W002 value=3.5 {DAY_START + 2}'
+printf '%s\\n' 'wxt.env.temp,description=ambient,sensor=vaisala-wxt536,units=celsius,vsn=W001 value=2.5 {DAY_START + 1}'
+printf '%s\\n' 'wxt.env.temp,description=enclosure,sensor=vaisala-wxt536,units=celsius,vsn=W002 value=3.5 {DAY_START + 2}'
 """
     )
     influxd.chmod(0o755)
@@ -266,8 +266,9 @@ printf '%s\\n' 'wxt.env.temp,sensor=vaisala-wxt536,units=fahrenheit,vsn=W002 val
     assert manifest["requires_review"] is True
     report = (tmp_path / "output/_catalog/metadata_conflicts.csv").read_text()
     assert "vaisala-wxt536::wxt.env.temp::value" in report
+    assert "ambient" in report
+    assert "enclosure" in report
     assert "celsius" in report
-    assert "fahrenheit" in report
 
 
 def test_engine_mode_rejects_measurement_discovery(tmp_path):

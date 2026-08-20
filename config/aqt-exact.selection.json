@@ -1,0 +1,17 @@
+{
+  "selection_version": 1,
+  "selectors": [
+    {"measurement": "aqt.env.humidity", "tags": {"sensor": ["vaisala-aqt530"]}},
+    {"measurement": "aqt.env.pressure", "tags": {"sensor": ["vaisala-aqt530"]}},
+    {"measurement": "aqt.env.temp", "tags": {"sensor": ["vaisala-aqt530"]}},
+    {"measurement": "aqt.gas.co", "tags": {"sensor": ["vaisala-aqt530"]}},
+    {"measurement": "aqt.gas.no", "tags": {"sensor": ["vaisala-aqt530"]}},
+    {"measurement": "aqt.gas.no2", "tags": {"sensor": ["vaisala-aqt530"]}},
+    {"measurement": "aqt.gas.ozone", "tags": {"sensor": ["vaisala-aqt530"]}},
+    {"measurement": "aqt.house.datetime", "tags": {"sensor": ["vaisala-aqt530"]}},
+    {"measurement": "aqt.house.uptime", "tags": {"sensor": ["vaisala-aqt530"]}},
+    {"measurement": "aqt.particle.pm1", "tags": {"sensor": ["vaisala-aqt530"]}},
+    {"measurement": "aqt.particle.pm10", "tags": {"sensor": ["vaisala-aqt530"]}},
+    {"measurement": "aqt.particle.pm2.5", "tags": {"sensor": ["vaisala-aqt530"]}}
+  ]
+}

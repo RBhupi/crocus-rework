@@ -1,0 +1,16 @@
+{
+  "selection_version": 1,
+  "selectors": [
+    {
+      "measurement": "wxt.env.temp",
+      "tags": {
+        "vsn": [
+          "W0*"
+        ],
+        "sensor": [
+          "vaisala-wxt536"
+        ]
+      }
+    }
+  ]
+}

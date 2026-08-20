@@ -872,6 +872,7 @@ def _write_selected_catalogs(config: ExportConfig) -> dict[str, object]:
         for field_name in normalized["fields"]:
             key = (normalized["sensor"], normalized["measurement"], field_name)
             signature = (
+                tags.get("description"),
                 tags.get("units"),
                 tags.get("missing"),
                 tuple(normalized["value_types"]),
