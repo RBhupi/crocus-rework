@@ -1,5 +1,8 @@
 # Selective VSN-first export
 
+For the current production status, HPC paths, monitoring, restart, validation,
+and next-session instructions, begin with `docs/HANDOVER.md`.
+
 ## Recommended workflow
 
 The exhaustive inventory is optional. Use a curated selection containing exact
