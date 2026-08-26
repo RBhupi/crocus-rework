@@ -825,8 +825,15 @@ def _write_selected_catalogs(config: ExportConfig) -> dict[str, object]:
         table = pq.read_table(path)
         minimum_times = table.column("minimum_time").cast("int64").to_pylist()
         maximum_times = table.column("maximum_time").cast("int64").to_pylist()
+        metadata_table = table.select(
+            [
+                name
+                for name in table.column_names
+                if name not in {"minimum_time", "maximum_time"}
+            ]
+        )
         for row, minimum_time_ns, maximum_time_ns in zip(
-            table.to_pylist(), minimum_times, maximum_times, strict=True
+            metadata_table.to_pylist(), minimum_times, maximum_times, strict=True
         ):
             series_id = bytes(row["series_id"])
             normalized = {

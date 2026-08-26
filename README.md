@@ -67,6 +67,8 @@ safe to resume. Do not run multiple orchestrators against one output root.
   monitoring, restart, validation, results, lessons, and next-session prompt
 - [`docs/selective_export.md`](docs/selective_export.md): selection format,
   export behavior, layout, and query examples
+- [`docs/data_levels_and_netcdf_naming.md`](docs/data_levels_and_netcdf_naming.md):
+  Bronze/Silver/Gold processing levels and final daily NetCDF filenames
 - [`docs/catalog_and_wxt_export.md`](docs/catalog_and_wxt_export.md): optional
   inventory workflow and InfluxDB setup
 - [`docs/instrument_hourly_converter.md`](docs/instrument_hourly_converter.md):

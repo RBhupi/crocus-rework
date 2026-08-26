@@ -605,6 +605,10 @@ sensor/VSN/instrument/day partition.
 7. Add another instrument only after curating its exact measurements and sensor
    identity from the completed inventory or a representative shard index.
 
+The approved Bronze/Silver/Gold level definitions, NetCDF codes, daily filename
+pattern, and time-coverage rules are defined in
+`docs/data_levels_and_netcdf_naming.md`.
+
 ## Suggested prompt for a new session
 
 ```text
