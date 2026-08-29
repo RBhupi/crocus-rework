@@ -239,14 +239,12 @@ def _coverage_attributes(
             "time_coverage_duration": "PT0S",
             "time_coverage_resolution": "not_applicable",
         }
-    first_second = int(time_ns.min()) // 1_000_000_000
-    last_second_exclusive = int(time_ns.max()) // 1_000_000_000 + 1
+    first_ns = int(time_ns.min())
+    last_ns = int(time_ns.max())
     return {
-        "time_coverage_start": _format_epoch_second(first_second),
-        "time_coverage_end": _format_epoch_second(last_second_exclusive),
-        "time_coverage_duration": _iso_duration_ns(
-            (last_second_exclusive - first_second) * 1_000_000_000
-        ),
+        "time_coverage_start": _format_epoch_nanosecond(first_ns),
+        "time_coverage_end": _format_epoch_nanosecond(last_ns),
+        "time_coverage_duration": _iso_duration_ns(last_ns - first_ns),
         "time_coverage_resolution": "variable-dependent native sampling",
     }
 
@@ -355,8 +353,13 @@ def _format_datetime(value: datetime) -> str:
     return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _format_epoch_second(value: int) -> str:
-    return _format_datetime(datetime(1970, 1, 1, tzinfo=UTC) + timedelta(seconds=value))
+def _format_epoch_nanosecond(value: int) -> str:
+    seconds, nanoseconds = divmod(value, 1_000_000_000)
+    base = datetime(1970, 1, 1, tzinfo=UTC) + timedelta(seconds=seconds)
+    timestamp = base.strftime("%Y-%m-%dT%H:%M:%S")
+    if nanoseconds == 0:
+        return f"{timestamp}Z"
+    return f"{timestamp}.{nanoseconds:09d}Z"
 
 
 def _iso_duration_ns(value: int) -> str:

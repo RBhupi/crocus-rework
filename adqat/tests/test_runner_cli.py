@@ -154,7 +154,13 @@ def test_writes_and_verifies_native_a1_netcdf(tmp_path: Path) -> None:
     run = yaml.safe_load(run_path.read_text(encoding="utf-8"))
     run["output"]["netcdf"] = {"enabled": True, "site": "neiu", "instrument": "wxt536"}
     run_path.write_text(yaml.safe_dump(run, sort_keys=False), encoding="utf-8")
-    write_facts(tmp_path, [{"time": BASE_NS + 123_456_789, "value": 100.0}])
+    write_facts(
+        tmp_path,
+        [
+            {"time": BASE_NS + 123_456_789, "value": 100.0},
+            {"time": BASE_NS + 1_987_654_321, "value": 100.0},
+        ],
+    )
 
     summary = run_new(run_path, "demo_wxt_work_unit", "netcdf-run")
     period = next((summary.run_dir / "work_units" / "demo_wxt_work_unit").iterdir())
@@ -162,9 +168,16 @@ def test_writes_and_verifies_native_a1_netcdf(tmp_path: Path) -> None:
     netcdf_path = period / filename
     assert netcdf_path.is_file()
     with netCDF4.Dataset(netcdf_path) as dataset:
-        assert len(dataset.dimensions["observation"]) == 1
+        assert len(dataset.dimensions["observation"]) == 2
         assert dataset.getncattr("crocus_data_level") == "a1"
         assert dataset.getncattr("site_id") == "neiu"
+        assert dataset.getncattr("time_coverage_start") == (
+            "2025-01-01T00:00:00.123456789Z"
+        )
+        assert dataset.getncattr("time_coverage_end") == (
+            "2025-01-01T00:00:01.987654321Z"
+        )
+        assert dataset.getncattr("time_coverage_duration") == "PT1.864197532S"
         series_id = np.asarray(dataset.variables["series_id"][0], dtype=np.uint8).tobytes()
         assert series_id.hex() == "00000000000000000000000000000000"
         assert int(dataset.variables["qc_bits"][0]) == (1 << 2) | (1 << 3)

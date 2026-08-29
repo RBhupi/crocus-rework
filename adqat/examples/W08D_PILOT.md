@@ -51,19 +51,19 @@ mamba run -n adqat adqat validate \
 /usr/bin/time -v mamba run -n adqat adqat run \
   examples/processing_run.w08d_wxt_20251215_20251216_pilot.yaml \
   --work-unit w08d_wxt536_20251215_20251216 \
-  --run-id w08d-wxt-20251215-16-pilot-v1
+  --run-id w08d-wxt-20251215-16-pilot-v2
 ```
 
 The run directory is:
 
 ```text
-/nfs/gce/projects/crocus-server-admins/data-rework/crocus-rework-output-tests-only/adqat-pilot-output/runs/w08d-wxt-20251215-16-pilot-v1
+/nfs/gce/projects/crocus-server-admins/data-rework/crocus-rework-output-tests-only/adqat-pilot-output/runs/w08d-wxt-20251215-16-pilot-v2
 ```
 
 Generate the persisted-evidence report:
 
 ```bash
-WXT_RUN=/nfs/gce/projects/crocus-server-admins/data-rework/crocus-rework-output-tests-only/adqat-pilot-output/runs/w08d-wxt-20251215-16-pilot-v1
+WXT_RUN=/nfs/gce/projects/crocus-server-admins/data-rework/crocus-rework-output-tests-only/adqat-pilot-output/runs/w08d-wxt-20251215-16-pilot-v2
 mamba run -n adqat adqat report "$WXT_RUN" | tee /tmp/w08d-wxt-pilot-report.txt
 mamba run -n adqat adqat report "$WXT_RUN" --json > /tmp/w08d-wxt-pilot-report.json
 ```
