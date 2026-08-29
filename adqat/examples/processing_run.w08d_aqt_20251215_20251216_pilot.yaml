@@ -27,5 +27,5 @@ work_units:
       instrument_id: W08D--vaisala-aqt530--core--df6b0090a23b
 
 output:
-  root: /nfs/gce/projects/crocus-server-admins/data-rework/crocus-rework-output/adqat-pilot-output
+  root: /nfs/gce/projects/crocus-server-admins/data-rework/crocus-rework-output-tests-only/adqat-pilot-output
   netcdf: {enabled: true, site: neiu, instrument: aqt530}

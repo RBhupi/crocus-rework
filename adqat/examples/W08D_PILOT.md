@@ -5,6 +5,10 @@ This pilot covers the half-open UTC interval
 instrument, and `date=2025-12-15|16` partitions. Run it on a host where the
 CROCUS production NFS is mounted.
 
+The production input tree under `crocus-rework-output/wxt-aqt-production-v5`
+is read-only to ADQAT. All pilot artifacts are written to the separate sibling
+tree `crocus-rework-output-tests-only/adqat-pilot-output`.
+
 The pilot creates restartable Parquet QA/QC evidence plus one native Level 1
 NetCDF file per UTC day. It does **not** create Level 2 aggregates. Numeric AQT
 variables receive missing/range checks; the string instrument clock
@@ -53,13 +57,13 @@ mamba run -n adqat adqat validate \
 The run directory is:
 
 ```text
-/nfs/gce/projects/crocus-server-admins/data-rework/crocus-rework-output/adqat-pilot-output/runs/w08d-wxt-20251215-16-pilot-v1
+/nfs/gce/projects/crocus-server-admins/data-rework/crocus-rework-output-tests-only/adqat-pilot-output/runs/w08d-wxt-20251215-16-pilot-v1
 ```
 
 Generate the persisted-evidence report:
 
 ```bash
-WXT_RUN=/nfs/gce/projects/crocus-server-admins/data-rework/crocus-rework-output/adqat-pilot-output/runs/w08d-wxt-20251215-16-pilot-v1
+WXT_RUN=/nfs/gce/projects/crocus-server-admins/data-rework/crocus-rework-output-tests-only/adqat-pilot-output/runs/w08d-wxt-20251215-16-pilot-v1
 mamba run -n adqat adqat report "$WXT_RUN" | tee /tmp/w08d-wxt-pilot-report.txt
 mamba run -n adqat adqat report "$WXT_RUN" --json > /tmp/w08d-wxt-pilot-report.json
 ```
@@ -161,7 +165,7 @@ mamba run -n adqat adqat validate \
   --work-unit w08d_aqt530_20251215_20251216 \
   --run-id w08d-aqt-20251215-16-pilot-v1
 
-AQT_RUN=/nfs/gce/projects/crocus-server-admins/data-rework/crocus-rework-output/adqat-pilot-output/runs/w08d-aqt-20251215-16-pilot-v1
+AQT_RUN=/nfs/gce/projects/crocus-server-admins/data-rework/crocus-rework-output-tests-only/adqat-pilot-output/runs/w08d-aqt-20251215-16-pilot-v1
 mamba run -n adqat adqat report "$AQT_RUN" | tee /tmp/w08d-aqt-pilot-report.txt
 ```
 

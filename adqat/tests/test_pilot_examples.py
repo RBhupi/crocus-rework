@@ -15,6 +15,22 @@ from adqat.runner import run_new
 EXAMPLE_RULES = (
     Path(__file__).parents[1] / "examples" / "quality_rules.crocus_wxt_aqt_pilot.yaml"
 )
+EXAMPLES_DIR = Path(__file__).parents[1] / "examples"
+
+
+def test_hpc_pilot_outputs_are_isolated_from_production_tree() -> None:
+    for filename in (
+        "processing_run.w08d_wxt_20251215_20251216_pilot.yaml",
+        "processing_run.w08d_aqt_20251215_20251216_pilot.yaml",
+    ):
+        document = yaml.safe_load((EXAMPLES_DIR / filename).read_text(encoding="utf-8"))
+        assert "/crocus-rework-output/wxt-aqt-production-v5/" in document["source"][
+            "path"
+        ]
+        assert document["output"]["root"] == (
+            "/nfs/gce/projects/crocus-server-admins/data-rework/"
+            "crocus-rework-output-tests-only/adqat-pilot-output"
+        )
 
 
 def _write_pilot_config(

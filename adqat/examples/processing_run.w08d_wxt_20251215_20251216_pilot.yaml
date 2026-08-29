@@ -27,5 +27,5 @@ work_units:
       instrument_id: W08D--vaisala-wxt536--core--934c67f6166a
 
 output:
-  root: /nfs/gce/projects/crocus-server-admins/data-rework/crocus-rework-output/adqat-pilot-output
+  root: /nfs/gce/projects/crocus-server-admins/data-rework/crocus-rework-output-tests-only/adqat-pilot-output
   netcdf: {enabled: true, site: neiu, instrument: wxt536}
