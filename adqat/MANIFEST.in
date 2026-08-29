@@ -1,0 +1,3 @@
+include environment.yml
+recursive-include examples *.yaml
+recursive-include examples *.md

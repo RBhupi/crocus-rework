@@ -1,0 +1,43 @@
+# SYNTHETIC TEMPLATE ONLY. Update paths and work-unit filters before running.
+schema_version: 1
+
+source:
+  type: parquet
+  path: ./synthetic-facts/**/*.parquet
+  options:
+    hive_partitioning: true
+    union_by_name: true
+  time:
+    column: time
+    timezone: UTC
+  observation_keys:
+    - time
+    - series_id
+
+quality:
+  rules: quality_rules.synthetic.yaml
+  pipeline: basic_qc
+
+selection:
+  start: "2025-01-01T00:00:00Z"
+  end: "2025-01-03T00:00:00Z"
+
+processing:
+  period: 1d
+
+work_units:
+  - id: demo_wxt_work_unit
+    profile: demo_wxt
+    filters:
+      sensor: vaisala-wxt536
+      vsn: W08E
+      instrument_id: W08E--demo
+  - id: demo_aqt_work_unit
+    profile: demo_aqt
+    filters:
+      sensor: vaisala-aqt530
+      vsn: W08E
+      instrument_id: W08E--aqt-demo
+
+output:
+  root: ./synthetic-results

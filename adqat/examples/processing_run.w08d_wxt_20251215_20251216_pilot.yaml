@@ -1,0 +1,31 @@
+# W08D WXT536 two-day pilot. Run on a host where the production NFS is mounted.
+schema_version: 1
+
+source:
+  type: parquet
+  path: /nfs/gce/projects/crocus-server-admins/data-rework/crocus-rework-output/wxt-aqt-production-v5/facts/sensor=vaisala-wxt536/vsn=W08D/instrument=W08D--vaisala-wxt536--core--934c67f6166a/date=2025-12-1[56]/part-*.parquet
+  options: {hive_partitioning: true, union_by_name: true}
+  time: {column: time, timezone: UTC}
+  observation_keys: [time, series_id]
+
+quality:
+  rules: quality_rules.crocus_wxt_aqt_pilot.yaml
+  pipeline: basic_qc
+
+selection:
+  start: 2025-12-15T00:00:00Z
+  end: 2025-12-17T00:00:00Z
+
+processing: {period: 1d}
+
+work_units:
+  - id: w08d_wxt536_20251215_20251216
+    profile: crocus_wxt536_pilot
+    filters:
+      sensor: vaisala-wxt536
+      vsn: W08D
+      instrument_id: W08D--vaisala-wxt536--core--934c67f6166a
+
+output:
+  root: /nfs/gce/projects/crocus-server-admins/data-rework/crocus-rework-output/adqat-pilot-output
+  netcdf: {enabled: true, site: neiu, instrument: wxt536}

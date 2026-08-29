@@ -1,0 +1,81 @@
+# SYNTHETIC SOFTWARE-TESTING RULES ONLY.
+# These limits are deliberately illustrative and are not approved scientific QC.
+schema_version: 1
+
+flags:
+  missing_value:
+    bit: 0
+    description: Observation exists but its value is null or NaN.
+  missing_sample:
+    bit: 1
+    description: Expected observation is absent; unused in Version 1.
+  physical_range:
+    bit: 2
+    description: Value is outside the configured physical limits.
+  instrument_range:
+    bit: 3
+    description: Value is outside the configured instrument limits.
+
+profiles:
+  demo_wxt:
+    sampling:
+      expected_frequency_hz: 10
+    variables:
+      temperature:
+        column: value_float64
+        where:
+          measurement: wxt.env.temp
+          field: value
+          value_type: float64
+        units: degree_Celsius
+        checks:
+          - id: temperature_missing
+            method: col_vals_not_null
+            flag: missing_value
+          - id: temperature_physical
+            method: col_vals_between
+            flag: physical_range
+            args: {left: -80, right: 70, inclusive: [true, true]}
+          - id: temperature_instrument
+            method: col_vals_between
+            flag: instrument_range
+            args: {left: -50, right: 60, inclusive: [true, true]}
+      wind_speed:
+        column: value_float64
+        where:
+          measurement: wxt.wind.speed
+          field: value
+          value_type: float64
+        units: m s-1
+        checks:
+          - id: wind_speed_missing
+            method: col_vals_not_null
+            flag: missing_value
+          - id: wind_speed_physical
+            method: col_vals_between
+            flag: physical_range
+            args: {left: 0, right: 100, inclusive: [true, true]}
+
+  demo_aqt:
+    variables:
+      carbon_monoxide:
+        column: value_float64
+        where:
+          measurement: aqt.gas.co
+          field: value
+          value_type: float64
+        units: ppm
+        checks:
+          - id: carbon_monoxide_missing
+            method: col_vals_not_null
+            flag: missing_value
+          - id: carbon_monoxide_instrument
+            method: col_vals_between
+            flag: instrument_range
+            args: {left: 0, right: 100, inclusive: [true, true]}
+
+pipelines:
+  basic_qc:
+    stages:
+      - id: basic
+        engine: pointblank
