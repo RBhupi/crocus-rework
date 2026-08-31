@@ -1,42 +1,35 @@
-# W08D WXT/AQT two-day A2Z pilot
+# W08D WXT/AQT two-day sparse-QC pilot
 
 This pilot covers the half-open UTC interval
 `[2025-12-15T00:00:00Z, 2025-12-17T00:00:00Z)`. It reads only the W08D,
-instrument, and `date=2025-12-15|16` partitions. Run it on a host where the
-CROCUS production NFS is mounted.
+instrument, and `date=2025-12-15|16` partitions on a host where the CROCUS NFS
+is mounted.
 
 The production input tree under `crocus-rework-output/wxt-aqt-production-v5`
-is read-only to ADQAT. All pilot artifacts are written to the separate sibling
-tree `crocus-rework-output-tests-only/adqat-pilot-output`.
+is read-only to ADQAT. All pilot artifacts go to the separate sibling tree
+`crocus-rework-output-tests-only/adqat-pilot-output`.
 
-The pilot creates restartable Parquet QA/QC evidence plus one native Level 1
-NetCDF file per UTC day. It does **not** create Level 2 aggregates. Numeric AQT
-variables receive missing/range checks; the string instrument clock
-(`aqt.house.datetime`) receives missing/sentinel checks without a meaningless
-numeric range.
+The workflow writes restartable sparse Parquet QA/QC evidence, one dataset file
+per UTC day. It does not create NetCDF or Level 2 aggregates. Raw timestamps
+and values are never regularized, interpolated, or rewritten. Only actual
+invalid values and configured physical/instrument range failures are flagged.
+A raw observation absent from `qc_flags.parquet` is valid under these rules; no
+row is synthesized for a nominal 10 Hz timestamp.
 
 The candidate limits are based on Vaisala documentation but are not approved
-CROCUS science rules. The snapshotted rule status in every run is `pilot`.
+CROCUS science rules. Every run snapshots the rules with status `pilot`.
 
 ## 1. Install on the data host
 
-First make this updated subproject available on the data host (through your
-normal Git or file-sync workflow), then run from its `adqat/` directory. The
-handover's NFS checkout is normally:
+From the checked-out `adqat/` directory:
 
 ```bash
 cd /nfs/gce/projects/crocus-server-admins/data-rework/crocus-rework/adqat
-```
-
-Create the environment:
-
-```bash
 mamba env create -f environment.yml
 mamba run -n adqat adqat --help
 ```
 
-If the environment already exists, update the editable installation after a
-code change:
+For an existing environment, refresh the editable package after pulling:
 
 ```bash
 mamba run -n adqat python -m pip install -e '.[dev]'
@@ -51,38 +44,35 @@ mamba run -n adqat adqat validate \
 /usr/bin/time -v mamba run -n adqat adqat run \
   examples/processing_run.w08d_wxt_20251215_20251216_pilot.yaml \
   --work-unit w08d_wxt536_20251215_20251216 \
-  --run-id w08d-wxt-20251215-16-pilot-v2
+  --run-id w08d-wxt-20251215-16-sparse-qc-v1
+
+WXT_RUN=/nfs/gce/projects/crocus-server-admins/data-rework/crocus-rework-output-tests-only/adqat-pilot-output/runs/w08d-wxt-20251215-16-sparse-qc-v1
+mamba run -n adqat adqat report "$WXT_RUN" | tee /tmp/w08d-wxt-sparse-qc-report.txt
+mamba run -n adqat adqat report "$WXT_RUN" --json > /tmp/w08d-wxt-sparse-qc-report.json
 ```
 
-The run directory is:
+Use a new immutable run ID. Do not reuse or modify the earlier successful
+NetCDF pilot runs.
+
+Every successful period must contain the same four artifacts:
 
 ```text
-/nfs/gce/projects/crocus-server-admins/data-rework/crocus-rework-output-tests-only/adqat-pilot-output/runs/w08d-wxt-20251215-16-pilot-v2
+findings.parquet
+check_results.parquet
+qc_flags.parquet
+success.json
 ```
 
-Generate the persisted-evidence report:
-
-```bash
-WXT_RUN=/nfs/gce/projects/crocus-server-admins/data-rework/crocus-rework-output-tests-only/adqat-pilot-output/runs/w08d-wxt-20251215-16-pilot-v2
-mamba run -n adqat adqat report "$WXT_RUN" | tee /tmp/w08d-wxt-pilot-report.txt
-mamba run -n adqat adqat report "$WXT_RUN" --json > /tmp/w08d-wxt-pilot-report.json
-```
-
-Check the success markers and NetCDF files without opening the source again:
+List them without reopening the source:
 
 ```bash
 find "$WXT_RUN/work_units" -type f \
-  \( -name success.json -o -name '*.nc' \) -print | sort
+  \( -name success.json -o -name '*.parquet' \) -print | sort
 ```
 
-Expected filename shape:
+## 3. Query and verify the sparse QC dataset
 
-```text
-neiu.wxt536.W08D.native.a1.20251215T000000Z-20251216T000000Z.nc
-neiu.wxt536.W08D.native.a1.20251216T000000Z-20251217T000000Z.nc
-```
-
-Inspect the two daily result tables with DuckDB:
+Query both daily files as one logical table:
 
 ```bash
 mamba run -n adqat python - "$WXT_RUN" <<'PY'
@@ -92,69 +82,67 @@ import duckdb
 run = sys.argv[1]
 checks = f"{run}/work_units/*/*/check_results.parquet"
 flags = f"{run}/work_units/*/*/qc_flags.parquet"
-
 con = duckdb.connect()
-result = con.execute("""
+
+print(con.execute("""
     SELECT variable, check_id, flag_name,
            sum(units_tested) AS tested,
            sum(units_failed) AS failed,
-           round(sum(units_failed) / nullif(sum(units_tested), 0), 8) AS fraction_failed
+           round(sum(units_failed) / nullif(sum(units_tested), 0), 8)
+             AS fraction_failed
     FROM read_parquet(?)
     GROUP BY variable, check_id, flag_name
     ORDER BY variable, check_id
-""", [checks])
-print("\t".join(column[0] for column in result.description))
-for row in result.fetchall():
-    print("\t".join(str(value) for value in row))
+""", [checks]).fetchdf().to_string(index=False))
+
 print(con.execute("""
-    SELECT qc_bits, count(*) AS observations
-    FROM read_parquet(?)
-    GROUP BY qc_bits
-    ORDER BY qc_bits
-""", [flags]).fetchall())
+    SELECT sensor, vsn, instrument_id, variable, qc_bits,
+           run_id, work_unit_id, config_hash
+    FROM read_parquet(?, union_by_name = true)
+    WHERE vsn = 'W08D' AND qc_bits <> 0
+    ORDER BY time, variable
+""", [flags]).fetchdf().to_string(index=False))
 PY
 ```
 
-Inspect the NetCDF contract and QC distribution:
+Check per-period counts and require all masks to be nonzero:
 
 ```bash
 mamba run -n adqat python - "$WXT_RUN" <<'PY'
 import glob
+import json
 import sys
-import numpy as np
-from netCDF4 import Dataset
+import pyarrow.parquet as pq
 
-for path in sorted(glob.glob(f"{sys.argv[1]}/work_units/*/*/*.nc")):
-    with Dataset(path) as nc:
-        qc = np.asarray(nc.variables["qc_bits"][:], dtype=np.uint64)
-        values, counts = np.unique(qc, return_counts=True)
-        print(path)
-        print(" observations:", len(nc.dimensions["observation"]))
-        print(" actual coverage:", nc.time_coverage_start, nc.time_coverage_end)
-        print(" config hash:", nc.qaqc_rule_fingerprint)
-        print(" qc distribution:", dict(zip(values.tolist(), counts.tolist(), strict=True)))
+for marker in sorted(glob.glob(f"{sys.argv[1]}/work_units/*/*/success.json")):
+    with open(marker, encoding="utf-8") as stream:
+        success = json.load(stream)
+    flags = pq.read_table(marker.replace("success.json", "qc_flags.parquet"))
+    masks = flags["qc_bits"].to_pylist()
+    assert all(mask > 0 for mask in masks)
+    assert len(masks) == success["flagged_observations"]
+    print(marker, "rows=", success["rows_processed"], "flagged=", len(masks))
 PY
 ```
 
 WXT gate before AQT:
 
-- two successful periods and two NetCDF files;
-- every NetCDF observation count equals the corresponding `rows_processed`;
-- no timestamp is outside its nominal UTC day (the writer verifies this);
+- two successful periods, each with all three Parquet tables;
+- `flagged_observations` equals the sparse flag-table row count;
+- every persisted `qc_bits` value is greater than zero;
+- broad clean pilot data may produce typed zero-row flag tables;
 - bit 1 is absent because cadence QC is disabled;
-- zero-unit variables are reviewed as unavailable for W08D, not called missing
-  samples (the inventory reports 9 WXT variables for W08D versus 11 globally);
-- unexpectedly large missing/range fractions are investigated before AQT or a
-  full-history run;
-- peak memory and elapsed time from `/usr/bin/time -v` are acceptable.
+- zero-unit variables are reviewed as unavailable, not called missing samples;
+- unexpectedly large missing/range fractions are investigated before AQT;
+- peak memory and elapsed time are acceptable.
 
-Resume the same immutable run after an interruption:
+Resume the same run after an interruption:
 
 ```bash
 mamba run -n adqat adqat resume "$WXT_RUN"
 ```
 
-## 3. Run AQT after the WXT gate passes
+## 4. Run AQT after the WXT gate passes
 
 ```bash
 mamba run -n adqat adqat validate \
@@ -163,27 +151,21 @@ mamba run -n adqat adqat validate \
 /usr/bin/time -v mamba run -n adqat adqat run \
   examples/processing_run.w08d_aqt_20251215_20251216_pilot.yaml \
   --work-unit w08d_aqt530_20251215_20251216 \
-  --run-id w08d-aqt-20251215-16-pilot-v1
+  --run-id w08d-aqt-20251215-16-sparse-qc-v1
 
-AQT_RUN=/nfs/gce/projects/crocus-server-admins/data-rework/crocus-rework-output-tests-only/adqat-pilot-output/runs/w08d-aqt-20251215-16-pilot-v1
-mamba run -n adqat adqat report "$AQT_RUN" | tee /tmp/w08d-aqt-pilot-report.txt
+AQT_RUN=/nfs/gce/projects/crocus-server-admins/data-rework/crocus-rework-output-tests-only/adqat-pilot-output/runs/w08d-aqt-20251215-16-sparse-qc-v1
+mamba run -n adqat adqat report "$AQT_RUN" | tee /tmp/w08d-aqt-sparse-qc-report.txt
 ```
 
-Repeat the Parquet and NetCDF checks above with `AQT_RUN`. The expected NetCDF
-filenames use `neiu.aqt530.W08D...`.
+Repeat the Parquet queries and verification above with `AQT_RUN`.
 
-## 4. Full-history rollout after scientific approval
+## 5. Full-history rollout after scientific approval
 
 Keep the quality-rules file reusable. Create one processing file per selected
-VSN/instrument and change only:
+VSN/instrument and change only the source partition/glob, UTC selection,
+work-unit identity and filters, output root, and immutable run ID.
 
-- source partition/glob;
-- UTC selection;
-- work-unit ID and equality filters;
-- reviewed `site`/instrument filename tokens;
-- output root and run ID.
-
-Replace the pilot rules with reviewed values and set their metadata status to
-`approved`. Use daily periods so resume scope and memory stay bounded. Do not
-enable cadence or aggregation until each variable's expected interval and
+Replace pilot limits with reviewed values and set metadata status to
+`approved`. Keep daily periods so resume scope and memory remain bounded. Do
+not enable cadence or aggregation until each variable's expected interval and
 minimum coverage are explicit.

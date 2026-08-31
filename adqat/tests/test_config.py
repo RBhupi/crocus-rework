@@ -78,6 +78,18 @@ def test_rejects_unknown_work_unit_and_profile(tmp_path: Path) -> None:
         load_config(run_path)
 
 
+def test_work_unit_requires_cross_run_identity_filters(tmp_path: Path) -> None:
+    (tmp_path / "quality_rules.yaml").write_text(
+        yaml.safe_dump(quality_document()), encoding="utf-8"
+    )
+    run = run_document(str(tmp_path / "facts" / "*.parquet"), str(tmp_path / "results"))
+    del run["work_units"][0]["filters"]["instrument_id"]
+    run_path = tmp_path / "processing_run.yaml"
+    run_path.write_text(yaml.safe_dump(run), encoding="utf-8")
+    with pytest.raises(ConfigError, match="instrument_id"):
+        load_config(run_path)
+
+
 def test_netcdf_requires_complete_utc_days(tmp_path: Path) -> None:
     rules_path = tmp_path / "quality_rules.yaml"
     rules_path.write_text(yaml.safe_dump(quality_document()), encoding="utf-8")

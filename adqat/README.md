@@ -62,8 +62,7 @@ Range checks always pass nulls. This ensures an absent value receives the
 missing-value flag without also receiving every range flag.
 
 `sampling.expected_frequency_hz` is accepted as provenance metadata only.
-Version 1 does not infer cadence, create missing observations, or evaluate
-coverage.
+ADQAT does not infer native cadence or create native observations.
 
 Real sources may encode missing observations as numeric sentinels. Declare them
 per variable so they become null before Pointblank runs:
@@ -74,6 +73,18 @@ missing_values: [-9999.9]
 
 String variables declare `data_type: string` and may use
 `col_vals_not_null` plus `missing_strings`. Range checks remain numeric-only.
+
+An optional dense one-minute product is enabled with:
+
+```yaml
+processing: {period: 1d, aggregation: 1minute}
+```
+
+Every variable in the selected profile then declares `aggregation` as `mean`,
+`circular_mean`, `mode`, or `last`. Wind direction uses `circular_mean`;
+cumulative rain/hail and uptime use `last`; categorical status uses `mode`.
+Only raw observations passing all configured direct-value checks contribute to
+the representative minute value and statistics.
 
 ## Run
 
@@ -95,6 +106,10 @@ findings exits with status zero. Configuration, source, engine, compilation,
 and persistence failures exit nonzero. A period with no matching observations
 also succeeds, emits a warning, and contains typed empty output tables.
 
+Each work unit must provide non-empty string filters for `sensor`, `vsn`, and
+`instrument_id`. These become immutable identity columns in the sparse QC
+dataset and make cross-run queries self-describing.
+
 ## Outputs and queries
 
 Each run represents one work unit:
@@ -108,6 +123,7 @@ runs/<run-id>/
     findings.parquet
     check_results.parquet
     qc_flags.parquet
+    minute_data.parquet  # when processing.aggregation is 1minute
     <site>.<instrument>.<vsn>.native.a1.<start>-<end>.nc  # when enabled
     success.json
 ```
@@ -116,13 +132,92 @@ Native Level 1 NetCDF is opt-in through `output.netcdf`. It requires complete
 UTC-day selections, carries nanosecond source timestamps, joins sparse flags
 back to every selected observation, writes required CROCUS provenance,
 and reopens each file for verification before publishing the period. This is a
-native `a1` slice; Level 2 aggregation remains deferred.
+backward-compatible native `a1` slice and cannot be combined with the current
+one-minute workflow.
+
+`minute_data.parquet` contains one row for every UTC minute and configured
+variable, including minutes with no source observation. Empty variable/minutes
+have null values, zero counts, `aggregate_valid=false`, and the
+`missing_sample` bit. Observed minutes include total/valid/invalid counts,
+per-raw-flag counts, valid fraction, observed row rate, maximum within-minute
+timestamp gap, mean, median, population standard deviation, minimum, maximum,
+quartiles, and IQR. Raw timestamps are neither regularized nor interpolated.
+Partial-minute completeness is diagnostic only because no deployment cadence
+has been asserted.
+
+Daily directories are atomic restart units, not separate logical products.
+Query all minute files for an instrument as one Parquet relation:
+
+```sql
+SELECT *
+FROM read_parquet(
+  '/results/adqat/runs/<run-id>/work_units/*/*/minute_data.parquet',
+  union_by_name = true
+)
+ORDER BY time, variable;
+```
 
 The concrete W08D two-day WXT-first/AQT-second runbook is
 [`examples/W08D_PILOT.md`](examples/W08D_PILOT.md). Its shared pilot rules are
 engineering candidates, not approved scientific thresholds.
 
-Query sparse findings without reopening source data:
+The current dense one-minute pilots and restartable full-history AQT/WXT
+campaign are documented in
+[`examples/FULL_HISTORY_MINUTE_CAMPAIGN.md`](examples/FULL_HISTORY_MINUTE_CAMPAIGN.md).
+The complete implementation context and new-session HPC handoff are in
+[`docs/plans/adqat-current-minute-qc-hpc-handoff.md`](docs/plans/adqat-current-minute-qc-hpc-handoff.md).
+
+For AQT-only testing, the manufacturer-datasheet profile is
+[`examples/quality_rules.crocus_aqt530_datasheet_test.yaml`](examples/quality_rules.crocus_aqt530_datasheet_test.yaml),
+with a two-day W08D processing example in
+[`examples/processing_run.w08d_aqt_20251215_20251216_datasheet_test.yaml`](examples/processing_run.w08d_aqt_20251215_20251216_datasheet_test.yaml).
+It converts documented gas limits from ppb to the CROCUS ppm representation.
+The datasheet provides no PM1 concentration or uptime range, so the profile
+does not invent those instrument checks. It remains a `pilot` standard until
+scientific review.
+
+The proposed, not-yet-implemented ADQAT 0.2 configuration and product
+architecture is recorded in
+[`docs/requirements/adqat-v0.2-product-architecture.md`](docs/requirements/adqat-v0.2-product-architecture.md).
+
+`qc_flags.parquet` is the canonical operational QC dataset. It contains only
+observations whose combined unsigned 64-bit mask is nonzero, plus observation
+keys, instrument identity, variable, run/work-unit identity, and configuration
+hash. A source observation with no matching row is valid under the configured
+raw rules. Clean and empty periods still contain a typed zero-row file.
+
+```text
+configured observation keys
+sensor             string
+vsn                string
+instrument_id      string
+variable           string
+qc_bits            uint64, always > 0 for nonempty files
+run_id             string
+work_unit_id       string
+config_hash        string
+```
+
+Rows are unique by configured observation keys plus `variable`; multiple
+findings for that identity are combined with `BIT_OR`.
+
+Query every period and run directly as one logical table with DuckDB; no import
+or catalog-building step is required:
+
+```sql
+SELECT *
+FROM read_parquet(
+  '/results/adqat/runs/*/work_units/*/*/qc_flags.parquet',
+  union_by_name = true
+)
+WHERE vsn = 'W08D'
+  AND qc_bits <> 0
+ORDER BY time, variable;
+```
+
+Parquet projection and filter pushdown apply to these sparse files. Query
+detailed findings without reopening source data when check-level evidence is
+needed:
 
 ```sql
 SELECT variable, check_id, count(*) AS failures
@@ -139,7 +234,8 @@ qc_bits = BIT_OR(1::UBIGINT << bit)
 
 `success.json` is the resume marker. A matching successful marker is trusted
 without restating source files; changed inputs require a deliberate new run if
-they are to be reprocessed.
+they are to be reprocessed. It records both check findings and unique flagged
+observations.
 
 ## Development
 
@@ -157,7 +253,7 @@ specific Parquet type to microsecond-resolution `TIMESTAMPTZ`; DuckDB remains
 the QC-bit compilation engine, with timestamp keys represented internally as
 nanosecond integers during grouping.
 
-Future temporal aggregation will remain disabled unless cadence is explicit.
-For example, 10 Hz with a one-second window and an 80% minimum requires at
-least eight observations; an insufficient window will yield a null aggregate,
-not invented observation rows.
+Future partial-minute completeness thresholds remain disabled unless cadence
+is explicit. The current minute product flags an entirely absent minute but
+does not classify a minute as incomplete merely because samples do not land on
+an inferred grid.

@@ -1,4 +1,3 @@
-# W08D AQT530 two-day pilot. Run only after reviewing the WXT pilot report.
 schema_version: 1
 
 source:
@@ -9,7 +8,7 @@ source:
   observation_keys: [time, series_id]
 
 quality:
-  rules: quality_rules.crocus_wxt_aqt_pilot.yaml
+  rules: quality_rules.crocus_aqt530_datasheet_test.yaml
   pipeline: basic_qc
 
 selection:
@@ -19,12 +18,12 @@ selection:
 processing: {period: 1d}
 
 work_units:
-  - id: w08d_aqt530_20251215_20251216
-    profile: crocus_aqt530_pilot
+  - id: w08d_aqt530_datasheet_test_20251215_20251216
+    profile: crocus_aqt530_datasheet_test
     filters:
       sensor: vaisala-aqt530
       vsn: W08D
       instrument_id: W08D--vaisala-aqt530--core--df6b0090a23b
 
 output:
-  root: /nfs/gce/projects/crocus-server-admins/data-rework/crocus-rework-output-tests-only/adqat-pilot-output
+  root: /nfs/gce/projects/crocus-server-admins/data-rework/crocus-rework-output-tests-only/adqat-aqt530-datasheet-test-output

@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, PositiveFloat, model_validato
 SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 GLOB_CHARS = re.compile(r"[*?\[]")
 Scalar = str | int | float | bool
+AggregationMethod = Literal["mean", "circular_mean", "mode", "last"]
 
 
 class ConfigError(ValueError):
@@ -71,6 +72,7 @@ class VariableDefinition(StrictModel):
     units: str | None = None
     missing_values: list[float] = Field(default_factory=list)
     missing_strings: list[str] = Field(default_factory=list)
+    aggregation: AggregationMethod | None = None
     checks: list[CheckDefinition] = Field(min_length=1)
 
     @model_validator(mode="after")
@@ -91,6 +93,10 @@ class VariableDefinition(StrictModel):
                 raise ValueError("string variables cannot declare numeric missing_values")
             if any(check.method != "col_vals_not_null" for check in self.checks):
                 raise ValueError("string variables support only col_vals_not_null")
+            if self.aggregation not in (None, "mode", "last"):
+                raise ValueError("string variables support only mode or last aggregation")
+        if self.aggregation == "circular_mean" and self.data_type != "numeric":
+            raise ValueError("circular_mean aggregation requires a numeric variable")
         return self
 
 
@@ -209,6 +215,7 @@ class SelectionDefinition(StrictModel):
 
 class ProcessingDefinition(StrictModel):
     period: Literal["1h", "1d", "1month", "1year", "all"]
+    aggregation: Literal["1minute"] | None = None
 
 
 class WorkUnitDefinition(StrictModel):
@@ -220,6 +227,12 @@ class WorkUnitDefinition(StrictModel):
     def validate_id(self) -> WorkUnitDefinition:
         if not SAFE_ID.fullmatch(self.id):
             raise ValueError("work-unit ID must be path-safe and at most 128 characters")
+        for name in ("sensor", "vsn", "instrument_id"):
+            value = self.filters.get(name)
+            if not isinstance(value, str) or not value:
+                raise ValueError(
+                    f"work unit requires a non-empty string filter for {name!r}"
+                )
         return self
 
 
@@ -249,6 +262,8 @@ class ProcessingRun(StrictModel):
         if len(ids) != len(set(ids)):
             raise ValueError("work-unit IDs must be unique")
         if self.output.netcdf is not None:
+            if self.processing.aggregation is not None:
+                raise ValueError("NetCDF output is not supported with 1-minute aggregation")
             if self.processing.period != "1d":
                 raise ValueError("NetCDF output requires processing.period '1d'")
             for boundary_name, boundary in (
@@ -262,14 +277,6 @@ class ProcessingRun(StrictModel):
                     0,
                 ):
                     raise ValueError(f"NetCDF output requires {boundary_name} at UTC midnight")
-            required_filters = {"sensor", "vsn", "instrument_id"}
-            for work_unit in self.work_units:
-                missing = sorted(required_filters.difference(work_unit.filters))
-                if missing:
-                    raise ValueError(
-                        f"NetCDF work unit {work_unit.id!r} requires filters: "
-                        f"{', '.join(missing)}"
-                    )
         return self
 
 
@@ -345,6 +352,17 @@ def load_config(path: str | Path) -> LoadedConfig:
             raise ConfigError(
                 f"work unit {work_unit.id!r} references unknown profile {work_unit.profile!r}"
             )
+        if run.processing.aggregation == "1minute":
+            missing_aggregation = [
+                name
+                for name, variable in rules.profiles[work_unit.profile].variables.items()
+                if variable.aggregation is None
+            ]
+            if missing_aggregation:
+                raise ConfigError(
+                    f"work unit {work_unit.id!r} uses 1-minute aggregation but variables "
+                    f"lack an aggregation method: {', '.join(missing_aggregation)}"
+                )
 
     source_path = _resolve_glob(run_path.parent, run.source.path)
     output_root = _resolve_path(run_path.parent, run.output.root)

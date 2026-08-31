@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import duckdb
 import netCDF4
 import numpy as np
 import pyarrow.parquet as pq
@@ -29,6 +30,7 @@ def test_end_to_end_run_resume_and_recompile(tmp_path: Path) -> None:
     assert summary.processed_periods == 2
     assert summary.empty_periods == 1
     assert summary.findings == 2
+    assert summary.flagged_observations == 1
     assert (source_path.stat().st_size, source_path.stat().st_mtime_ns) == before
 
     run_dir = tmp_path / "results" / "runs" / "test-run"
@@ -39,8 +41,15 @@ def test_end_to_end_run_resume_and_recompile(tmp_path: Path) -> None:
     assert pq.read_table(periods[1] / "qc_flags.parquet").num_rows == 0
     first_flags = pq.read_table(periods[0] / "qc_flags.parquet")
     assert first_flags["qc_bits"][0].as_py() == (1 << 2) | (1 << 3)
+    assert first_flags["sensor"][0].as_py() == "vaisala-wxt536"
+    assert first_flags["vsn"][0].as_py() == "W08E"
+    assert first_flags["instrument_id"][0].as_py() == "W08E--demo"
+    assert first_flags["run_id"][0].as_py() == "test-run"
+    assert first_flags["work_unit_id"][0].as_py() == "demo_wxt_work_unit"
     success = json.loads((periods[0] / "success.json").read_text())
     assert success["source_file_count"] == 1
+    assert success["flagged_observations"] == 1
+    assert first_flags["config_hash"][0].as_py() == success["config_hash"]
     assert len(success["input_fingerprint"]) == 64
     assert (run_dir / "run.json").is_file()
     assert (run_dir / "quality_rules.yaml").is_file()
@@ -52,9 +61,22 @@ def test_end_to_end_run_resume_and_recompile(tmp_path: Path) -> None:
     assert resumed.skipped_periods == 2
 
     flags = periods[0] / "qc_flags.parquet"
+    before_compile = pq.read_table(flags)
     flags.unlink()
     assert compile_run(run_dir, periods[0].name) == 1
     assert flags.is_file()
+    assert pq.read_table(flags).equals(before_compile)
+
+    relation = duckdb.connect().execute(
+        """
+        SELECT vsn, qc_bits, count(*) AS observations
+        FROM read_parquet(?, union_by_name = true)
+        WHERE vsn = ? AND qc_bits <> 0
+        GROUP BY vsn, qc_bits
+        """,
+        [str(run_dir / "work_units" / "*" / "*" / "qc_flags.parquet"), "W08E"],
+    ).fetchall()
+    assert relation == [("W08E", (1 << 2) | (1 << 3), 1)]
 
 
 def test_corrupt_success_marker_is_recomputed(tmp_path: Path) -> None:
@@ -87,6 +109,7 @@ def test_cli_exit_codes_and_output(tmp_path: Path, capsys: object) -> None:
     )
     output = capsys.readouterr()
     assert "findings=2" in output.out
+    assert "flagged_observations=1" in output.out
     assert main(["run", str(run_path), "--work-unit", "missing"]) == 1
 
 

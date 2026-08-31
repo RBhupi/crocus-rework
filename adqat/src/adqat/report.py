@@ -53,6 +53,17 @@ def build_run_report(run_dir: str | Path) -> dict[str, Any]:
         "periods": len(periods),
         "rows_processed": sum(int(item["rows_processed"]) for item in successes),
         "findings": sum(int(item["findings"]) for item in successes),
+        "flagged_observations": sum(
+            _flagged_observations(period, item)
+            for period, item in zip(periods, successes, strict=True)
+        ),
+        "minute_rows": sum(int(item.get("minute_rows", 0)) for item in successes),
+        "missing_minute_rows": sum(
+            int(item.get("missing_minute_rows", 0)) for item in successes
+        ),
+        "flagged_minute_rows": sum(
+            int(item.get("flagged_minute_rows", 0)) for item in successes
+        ),
         "netcdf_files": [
             str(period / item["netcdf_file"])
             for period, item in zip(periods, successes, strict=True)
@@ -70,6 +81,10 @@ def format_run_report(report: dict[str, Any]) -> str:
         f"periods: {report['periods']}",
         f"rows_processed: {report['rows_processed']}",
         f"findings: {report['findings']}",
+        f"flagged_observations: {report['flagged_observations']}",
+        f"minute_rows: {report['minute_rows']}",
+        f"missing_minute_rows: {report['missing_minute_rows']}",
+        f"flagged_minute_rows: {report['flagged_minute_rows']}",
         f"netcdf_files: {len(report['netcdf_files'])}",
         "",
         "variable\tcheck_id\tflag\tbit\ttested\tfailed\tfraction_failed",
@@ -91,3 +106,11 @@ def format_run_report(report: dict[str, Any]) -> str:
     if report["netcdf_files"]:
         lines.extend(["", "NetCDF:", *[str(path) for path in report["netcdf_files"]]])
     return "\n".join(lines)
+
+
+def _flagged_observations(period: Path, success: dict[str, Any]) -> int:
+    persisted = success.get("flagged_observations")
+    if persisted is not None:
+        return int(persisted)
+    # Backward compatibility for runs created before this field was added.
+    return pl.read_parquet(period / "qc_flags.parquet").height

@@ -92,8 +92,15 @@ def _print_summary(summary: RunSummary) -> None:
     print(f"run directory: {summary.run_dir}")
     print(
         f"processed={summary.processed_periods} skipped={summary.skipped_periods} "
-        f"empty={summary.empty_periods} findings={summary.findings}"
+        f"empty={summary.empty_periods} findings={summary.findings} "
+        f"flagged_observations={summary.flagged_observations}"
     )
+    if summary.minute_rows:
+        print(
+            f"minute_rows={summary.minute_rows} "
+            f"missing_minute_rows={summary.missing_minute_rows} "
+            f"flagged_minute_rows={summary.flagged_minute_rows}"
+        )
     for warning in summary.warnings:
         print(f"warning: {warning}", file=sys.stderr)
 

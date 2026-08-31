@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from adqat import __version__
-from adqat.compile import compile_findings
+from adqat.compile import QCFlagContext, compile_findings
 from adqat.config import (
     ConfigError,
     ResolvedConfig,
@@ -22,6 +22,7 @@ from adqat.config import (
     validate_run_id,
 )
 from adqat.findings import check_results_schema, findings_schema, write_frame
+from adqat.minute import minute_data_schema
 from adqat.netcdf import native_a1_filename, write_native_a1
 from adqat.periods import Period
 from adqat.pointblank import EngineResult
@@ -84,7 +85,9 @@ class RunStore:
         selected: SelectedPeriod,
         engine_result: EngineResult,
         config: ResolvedConfig,
-    ) -> Path:
+        *,
+        minute_data: Any | None = None,
+    ) -> tuple[Path, int]:
         final_dir = self.period_dir(period)
         _require_descendant(final_dir, self.run_dir)
         self._remove_incomplete_period(final_dir)
@@ -103,11 +106,24 @@ class RunStore:
                 check_results_schema(),
                 stage / "check_results.parquet",
             )
-            compile_findings(
+            flagged_observations = compile_findings(
                 findings_path,
                 stage / "qc_flags.parquet",
                 config.run.source.observation_keys,
+                _flag_context(config),
             )
+            minute_rows = 0
+            missing_minute_rows = 0
+            flagged_minute_rows = 0
+            if minute_data is not None:
+                write_frame(minute_data, minute_data_schema(), stage / "minute_data.parquet")
+                minute_rows = minute_data.height
+                missing_minute_rows = minute_data.filter(
+                    minute_data["total_count"] == 0
+                ).height
+                flagged_minute_rows = minute_data.filter(
+                    minute_data["qc_bits"] != 0
+                ).height
             fingerprint, file_count = input_fingerprint(selected.source_files)
             netcdf_name: str | None = None
             if config.run.output.netcdf is not None:
@@ -130,6 +146,10 @@ class RunStore:
                 "period_end": period.end.isoformat(),
                 "rows_processed": selected.row_count,
                 "findings": engine_result.findings.height,
+                "flagged_observations": flagged_observations,
+                "minute_rows": minute_rows,
+                "missing_minute_rows": missing_minute_rows,
+                "flagged_minute_rows": flagged_minute_rows,
                 "input_fingerprint": fingerprint,
                 "source_file_count": file_count,
                 "netcdf_file": netcdf_name,
@@ -143,7 +163,7 @@ class RunStore:
         except Exception:
             # Keep staging evidence for diagnosis; resume removes it before recomputation.
             raise
-        return final_dir
+        return final_dir, flagged_observations
 
     def period_dir(self, period: Period) -> Path:
         return self.work_unit_root / period.id
@@ -170,6 +190,7 @@ class RunStore:
             "selection_start": config.run.selection.start.isoformat(),
             "selection_end": config.run.selection.end.isoformat(),
             "processing_period": config.run.processing.period,
+            "aggregation": config.run.processing.aggregation,
             "netcdf": (
                 config.run.output.netcdf.model_dump(mode="json")
                 if config.run.output.netcdf is not None
@@ -221,6 +242,16 @@ def input_fingerprint(paths: tuple[Path, ...]) -> tuple[str, int]:
         records.append({"path": str(path), "size": stat.st_size, "mtime_ns": stat.st_mtime_ns})
     payload = json.dumps(records, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(payload).hexdigest(), len(records)
+
+
+def _flag_context(config: ResolvedConfig) -> QCFlagContext:
+    filters = config.work_unit.filters
+    return QCFlagContext(
+        sensor=str(filters["sensor"]),
+        vsn=str(filters["vsn"]),
+        instrument_id=str(filters["instrument_id"]),
+        config_hash=config.config_hash,
+    )
 
 
 def _dependency_versions() -> dict[str, str]:

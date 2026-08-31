@@ -47,12 +47,19 @@ def check_results_schema() -> pa.Schema:
 
 def qc_flags_schema(key_schema: pa.Schema) -> pa.Schema:
     fields: list[pa.Field[Any]] = [key_schema.field(index) for index in range(len(key_schema))]
+    field_names = set(key_schema.names)
     fields.extend(
         [
+            *[
+                pa.field(name, pa.string(), nullable=False)
+                for name in ("sensor", "vsn", "instrument_id")
+                if name not in field_names
+            ],
             pa.field("variable", pa.string(), nullable=False),
             pa.field("qc_bits", pa.uint64(), nullable=False),
             pa.field("run_id", pa.string(), nullable=False),
             pa.field("work_unit_id", pa.string(), nullable=False),
+            pa.field("config_hash", pa.string(), nullable=False),
         ]
     )
     return pa.schema(fields)

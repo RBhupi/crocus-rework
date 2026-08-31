@@ -9,8 +9,9 @@ from pathlib import Path
 import polars as pl
 import pyarrow as pa
 
-from adqat.compile import compile_findings
+from adqat.compile import QCFlagContext, compile_findings
 from adqat.config import LoadedConfig, ResolvedConfig, load_config
+from adqat.minute import aggregate_one_minute
 from adqat.periods import Period, iter_periods
 from adqat.pointblank import EngineResult, run_pointblank
 from adqat.source import select_period, validate_source
@@ -27,6 +28,10 @@ class RunSummary:
     skipped_periods: int = 0
     empty_periods: int = 0
     findings: int = 0
+    flagged_observations: int = 0
+    minute_rows: int = 0
+    missing_minute_rows: int = 0
+    flagged_minute_rows: int = 0
     warnings: list[str] = field(default_factory=list)
 
 
@@ -67,6 +72,7 @@ def compile_run(run_dir: str | Path, period_id: str | None = None) -> int:
             directory / "findings.parquet",
             directory / "qc_flags.parquet",
             existing.config.run.source.observation_keys,
+            _flag_context(existing.config),
             atomic=True,
         )
     return len(period_directories)
@@ -112,9 +118,23 @@ def _run_period(
         summary.empty_periods += 1
         summary.warnings.append(f"period {period.id} contained no matching observations")
     result = _run_pipeline(selected.data, selected.key_schema, config, store.run_id)
-    store.persist_period(period, selected, result, config)
+    minute_data = (
+        aggregate_one_minute(selected.data, result, config, period, store.run_id)
+        if config.run.processing.aggregation == "1minute"
+        else None
+    )
+    _, flagged_observations = store.persist_period(
+        period, selected, result, config, minute_data=minute_data
+    )
     summary.processed_periods += 1
     summary.findings += result.findings.height
+    summary.flagged_observations += flagged_observations
+    if minute_data is not None:
+        summary.minute_rows += minute_data.height
+        summary.missing_minute_rows += minute_data.filter(
+            pl.col("total_count") == 0
+        ).height
+        summary.flagged_minute_rows += minute_data.filter(pl.col("qc_bits") != 0).height
 
 
 def _run_pipeline(
@@ -129,3 +149,13 @@ def _run_pipeline(
     except KeyError as error:  # pragma: no cover - configuration currently constrains the value
         raise ValueError(f"unknown engine {stage.engine!r}") from error
     return engine(data, key_schema, config, run_id)
+
+
+def _flag_context(config: ResolvedConfig) -> QCFlagContext:
+    filters = config.work_unit.filters
+    return QCFlagContext(
+        sensor=str(filters["sensor"]),
+        vsn=str(filters["vsn"]),
+        instrument_id=str(filters["instrument_id"]),
+        config_hash=config.config_hash,
+    )
