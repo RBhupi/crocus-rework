@@ -71,7 +71,7 @@ for run_id in (
 ):
     pattern = f"{root}/runs/{run_id}/work_units/*/*/minute_data.parquet"
     row = connection.execute("""
-        SELECT count(*) rows,
+        SELECT count(*) AS row_count,
                sum(total_count = 0) missing_rows,
                sum(qc_bits <> 0) flagged_rows,
                sum(valid_count) valid_observations

@@ -13,8 +13,7 @@ from adqat.pointblank import EngineResult
 
 
 def minute_data_schema() -> pa.Schema:
-    return pa.schema(
-        [
+    fields: list[pa.Field[Any]] = [
             pa.field("time", pa.timestamp("ns", tz="UTC"), nullable=False),
             pa.field("sensor", pa.string(), nullable=False),
             pa.field("vsn", pa.string(), nullable=False),
@@ -47,8 +46,8 @@ def minute_data_schema() -> pa.Schema:
             pa.field("run_id", pa.string(), nullable=False),
             pa.field("work_unit_id", pa.string(), nullable=False),
             pa.field("config_hash", pa.string(), nullable=False),
-        ]
-    )
+    ]
+    return pa.schema(fields)
 
 
 def aggregate_one_minute(
@@ -354,8 +353,7 @@ def _empty_aggregates() -> pl.DataFrame:
 
 
 def _polars_schema() -> pl.Schema:
-    return pl.Schema(
-        {
+    schema: dict[str, pl.DataType | type[pl.DataType]] = {
             "time": pl.Datetime("ns", "UTC"),
             "sensor": pl.String,
             "vsn": pl.String,
@@ -388,8 +386,8 @@ def _polars_schema() -> pl.Schema:
             "run_id": pl.String,
             "work_unit_id": pl.String,
             "config_hash": pl.String,
-        }
-    )
+    }
+    return pl.Schema(schema)
 
 
 def _validate_minute_data(frame: pl.DataFrame, expected_rows: int) -> None:
