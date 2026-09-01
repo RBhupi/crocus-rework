@@ -159,6 +159,85 @@ class QualityRules(StrictModel):
         return self
 
 
+class AggregateRangeDefinition(StrictModel):
+    left: float
+    right: float
+    inclusive: tuple[bool, bool] = (True, True)
+
+    @model_validator(mode="after")
+    def validate_bounds(self) -> AggregateRangeDefinition:
+        if not math.isfinite(self.left) or not math.isfinite(self.right):
+            raise ValueError("aggregate range bounds must be finite")
+        if self.left >= self.right:
+            raise ValueError("aggregate range left bound must be less than right bound")
+        return self
+
+
+class AggregateCoverageDefinition(StrictModel):
+    minimum_valid_count: int = Field(default=1, ge=1)
+    minimum_valid_fraction: float | None = Field(default=None, ge=0, le=1)
+
+
+class AggregateVariabilityDefinition(StrictModel):
+    maximum_standard_deviation: PositiveFloat
+
+
+class AggregateStuckDefinition(StrictModel):
+    maximum_standard_deviation: float = Field(ge=0)
+    minimum_valid_count: int = Field(default=2, ge=2)
+
+
+class AggregateVariableDefinition(StrictModel):
+    coverage: AggregateCoverageDefinition = Field(default_factory=AggregateCoverageDefinition)
+    variability: AggregateVariabilityDefinition | None = None
+    stuck: AggregateStuckDefinition | None = None
+    physical_range: AggregateRangeDefinition | None = None
+    instrument_range: AggregateRangeDefinition | None = None
+
+    @model_validator(mode="after")
+    def validate_statistical_thresholds(self) -> AggregateVariableDefinition:
+        if (
+            self.variability is not None
+            and self.stuck is not None
+            and self.stuck.maximum_standard_deviation > self.variability.maximum_standard_deviation
+        ):
+            raise ValueError("stuck maximum standard deviation cannot exceed variability maximum")
+        return self
+
+
+class AggregateProfileDefinition(StrictModel):
+    variables: dict[str, AggregateVariableDefinition] = Field(min_length=1)
+
+
+AGGREGATE_FLAG_BITS = {
+    "insufficient_coverage": 0,
+    "excessive_variability": 1,
+    "stuck_value": 2,
+    "below_physical_minimum": 3,
+    "above_physical_maximum": 4,
+    "below_instrument_minimum": 5,
+    "above_instrument_maximum": 6,
+    "reserved": 7,
+}
+
+
+class AggregateQualityRules(StrictModel):
+    schema_version: Literal[1]
+    metadata: RulesMetadata
+    flags: dict[str, FlagDefinition]
+    profiles: dict[str, AggregateProfileDefinition] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_fixed_eight_bit_contract(self) -> AggregateQualityRules:
+        actual = {name: definition.bit for name, definition in self.flags.items()}
+        if actual != AGGREGATE_FLAG_BITS:
+            raise ValueError(
+                "aggregate flags must define the fixed eight-bit ADQAT layout "
+                f"{AGGREGATE_FLAG_BITS!r}"
+            )
+        return self
+
+
 class ParquetOptions(StrictModel):
     hive_partitioning: bool = False
     union_by_name: bool = True
@@ -195,6 +274,7 @@ class SourceDefinition(StrictModel):
 
 class QualityReference(StrictModel):
     rules: str = Field(min_length=1)
+    aggregate_rules: str | None = Field(default=None, min_length=1)
     pipeline: str = Field(min_length=1)
 
 
@@ -213,9 +293,43 @@ class SelectionDefinition(StrictModel):
         return self
 
 
+class AggregationDefinition(StrictModel):
+    period: int = Field(gt=0)
+    units: Literal["seconds", "minutes", "hours"]
+
+    @property
+    def seconds(self) -> int:
+        multiplier = {"seconds": 1, "minutes": 60, "hours": 3600}[self.units]
+        return self.period * multiplier
+
+    @property
+    def label(self) -> str:
+        suffix = {"seconds": "s", "minutes": "min", "hours": "h"}[self.units]
+        return f"{self.period}{suffix}"
+
+
 class ProcessingDefinition(StrictModel):
     period: Literal["1h", "1d", "1month", "1year", "all"]
-    aggregation: Literal["1minute"] | None = None
+    aggregation: AggregationDefinition | None = None
+
+    @property
+    def aggregation_seconds(self) -> int | None:
+        if self.aggregation is None:
+            return None
+        return self.aggregation.seconds
+
+    @property
+    def aggregation_label(self) -> str | None:
+        if self.aggregation is None:
+            return None
+        return self.aggregation.label
+
+    @property
+    def aggregation_polars_duration(self) -> str | None:
+        if self.aggregation is None:
+            return None
+        suffix = {"seconds": "s", "minutes": "m", "hours": "h"}[self.aggregation.units]
+        return f"{self.aggregation.period}{suffix}"
 
 
 class WorkUnitDefinition(StrictModel):
@@ -230,9 +344,7 @@ class WorkUnitDefinition(StrictModel):
         for name in ("sensor", "vsn", "instrument_id"):
             value = self.filters.get(name)
             if not isinstance(value, str) or not value:
-                raise ValueError(
-                    f"work unit requires a non-empty string filter for {name!r}"
-                )
+                raise ValueError(f"work unit requires a non-empty string filter for {name!r}")
         return self
 
 
@@ -240,6 +352,15 @@ class NetCDFDefinition(StrictModel):
     enabled: Literal[True]
     site: str = Field(pattern=r"^[a-z]{3,8}$")
     instrument: str = Field(pattern=r"^[a-z0-9]{3,16}$")
+    product: Literal["native", "aggregate"] = "native"
+    data_level: str = Field(default="a1", pattern=r"^[a-z][0-9]$")
+    fill_value: float = -999.0
+
+    @model_validator(mode="after")
+    def validate_fill_value(self) -> NetCDFDefinition:
+        if not math.isfinite(self.fill_value):
+            raise ValueError("NetCDF fill value must be finite")
+        return self
 
 
 class OutputDefinition(StrictModel):
@@ -261,9 +382,41 @@ class ProcessingRun(StrictModel):
         ids = [work_unit.id for work_unit in self.work_units]
         if len(ids) != len(set(ids)):
             raise ValueError("work-unit IDs must be unique")
+        aggregation_seconds = self.processing.aggregation_seconds
+        if aggregation_seconds is not None:
+            chunk_seconds = {"1h": 3600, "1d": 86_400}.get(self.processing.period)
+            if chunk_seconds is not None and chunk_seconds % aggregation_seconds != 0:
+                raise ValueError(
+                    "aggregation duration must divide the fixed processing period exactly"
+                )
+            if self.processing.period in {"1month", "1year"} and (
+                aggregation_seconds > 86_400 or 86_400 % aggregation_seconds != 0
+            ):
+                raise ValueError(
+                    "calendar processing periods require an aggregation duration that "
+                    "divides one UTC day"
+                )
+            selection_seconds = int((self.selection.end - self.selection.start).total_seconds())
+            if self.processing.period == "all" and selection_seconds % aggregation_seconds:
+                raise ValueError("aggregation duration must divide an 'all' selection exactly")
+            for boundary_name, boundary in (
+                ("selection.start", self.selection.start),
+                ("selection.end", self.selection.end),
+            ):
+                if int(boundary.timestamp()) % aggregation_seconds != 0:
+                    raise ValueError(f"{boundary_name} must align to the aggregation duration")
         if self.output.netcdf is not None:
             if self.processing.aggregation is not None:
-                raise ValueError("NetCDF output is not supported with 1-minute aggregation")
+                if self.output.netcdf.product != "aggregate":
+                    raise ValueError("aggregation requires output.netcdf.product 'aggregate'")
+            elif self.output.netcdf.product != "native":
+                raise ValueError(
+                    "output.netcdf.product 'aggregate' requires processing.aggregation"
+                )
+            if self.output.netcdf.product == "native" and self.output.netcdf.data_level != "a1":
+                raise ValueError("native NetCDF output requires data_level 'a1'")
+            if self.output.netcdf.product == "aggregate" and self.output.netcdf.data_level != "b1":
+                raise ValueError("aggregate NetCDF output requires data_level 'b1'")
             if self.processing.period != "1d":
                 raise ValueError("NetCDF output requires processing.period '1d'")
             for boundary_name, boundary in (
@@ -277,6 +430,8 @@ class ProcessingRun(StrictModel):
                     0,
                 ):
                     raise ValueError(f"NetCDF output requires {boundary_name} at UTC midnight")
+            if aggregation_seconds is not None and 86_400 % aggregation_seconds != 0:
+                raise ValueError("NetCDF aggregation duration must divide one UTC day exactly")
         return self
 
 
@@ -284,8 +439,10 @@ class ProcessingRun(StrictModel):
 class LoadedConfig:
     run: ProcessingRun
     rules: QualityRules
+    aggregate_rules: AggregateQualityRules | None
     run_path: Path
     rules_path: Path
+    aggregate_rules_path: Path | None
     source_path: str
     output_root: Path
 
@@ -295,12 +452,18 @@ class LoadedConfig:
             raise ConfigError(f"unknown work unit {work_unit_id!r}")
         work_unit = matches[0]
         profile = self.rules.profiles[work_unit.profile]
+        aggregate_profile = (
+            self.aggregate_rules.profiles[work_unit.profile]
+            if self.aggregate_rules is not None
+            else None
+        )
         pipeline = self.rules.pipelines[self.run.quality.pipeline]
-        resolved = ResolvedConfig(self, work_unit, profile, pipeline, "")
+        resolved = ResolvedConfig(self, work_unit, profile, aggregate_profile, pipeline, "")
         return ResolvedConfig(
             self,
             work_unit,
             profile,
+            aggregate_profile,
             pipeline,
             _configuration_hash(resolved),
         )
@@ -311,6 +474,7 @@ class ResolvedConfig:
     loaded: LoadedConfig
     work_unit: WorkUnitDefinition
     profile: ProfileDefinition
+    aggregate_profile: AggregateProfileDefinition | None
     pipeline: PipelineDefinition
     config_hash: str
 
@@ -321,6 +485,10 @@ class ResolvedConfig:
     @property
     def rules(self) -> QualityRules:
         return self.loaded.rules
+
+    @property
+    def aggregate_rules(self) -> AggregateQualityRules | None:
+        return self.loaded.aggregate_rules
 
     @property
     def source_path(self) -> str:
@@ -345,6 +513,28 @@ def load_config(path: str | Path) -> LoadedConfig:
     except Exception as error:
         raise ConfigError(f"invalid quality rules: {error}") from error
 
+    aggregate_rules_path: Path | None = None
+    aggregate_rules: AggregateQualityRules | None = None
+    if run.quality.aggregate_rules is not None:
+        aggregate_rules_path = _resolve_path(run_path.parent, run.quality.aggregate_rules)
+        try:
+            aggregate_rules = AggregateQualityRules.model_validate(_read_yaml(aggregate_rules_path))
+        except Exception as error:
+            raise ConfigError(f"invalid aggregate quality rules: {error}") from error
+    if run.processing.aggregation is not None and aggregate_rules is None:
+        raise ConfigError(
+            "fixed-period aggregation requires quality.aggregate_rules with the eight-bit rules"
+        )
+    if run.processing.aggregation is None and aggregate_rules is not None:
+        raise ConfigError("quality.aggregate_rules requires processing.aggregation")
+    if run.processing.aggregation is not None:
+        required_raw_flags = {"missing_value", "physical_range", "instrument_range"}
+        missing_raw_flags = sorted(required_raw_flags - set(rules.flags))
+        if missing_raw_flags:
+            raise ConfigError(
+                "fixed-period aggregation requires raw flags: " + ", ".join(missing_raw_flags)
+            )
+
     if run.quality.pipeline not in rules.pipelines:
         raise ConfigError(f"unknown pipeline {run.quality.pipeline!r}")
     for work_unit in run.work_units:
@@ -352,7 +542,7 @@ def load_config(path: str | Path) -> LoadedConfig:
             raise ConfigError(
                 f"work unit {work_unit.id!r} references unknown profile {work_unit.profile!r}"
             )
-        if run.processing.aggregation == "1minute":
+        if run.processing.aggregation is not None:
             missing_aggregation = [
                 name
                 for name, variable in rules.profiles[work_unit.profile].variables.items()
@@ -360,14 +550,51 @@ def load_config(path: str | Path) -> LoadedConfig:
             ]
             if missing_aggregation:
                 raise ConfigError(
-                    f"work unit {work_unit.id!r} uses 1-minute aggregation but variables "
+                    f"work unit {work_unit.id!r} uses fixed-period aggregation but variables "
                     f"lack an aggregation method: {', '.join(missing_aggregation)}"
                 )
+            if aggregate_rules is None or work_unit.profile not in aggregate_rules.profiles:
+                raise ConfigError(
+                    f"aggregate quality rules do not define profile {work_unit.profile!r}"
+                )
+            raw_variables = set(rules.profiles[work_unit.profile].variables)
+            aggregate_variables = set(aggregate_rules.profiles[work_unit.profile].variables)
+            if raw_variables != aggregate_variables:
+                missing = sorted(raw_variables - aggregate_variables)
+                extra = sorted(aggregate_variables - raw_variables)
+                raise ConfigError(
+                    f"aggregate profile {work_unit.profile!r} variables must match raw profile; "
+                    f"missing={missing!r}, extra={extra!r}"
+                )
+            aggregate_profile = aggregate_rules.profiles[work_unit.profile]
+            for variable_name, variable in rules.profiles[work_unit.profile].variables.items():
+                aggregate_variable = aggregate_profile.variables[variable_name]
+                if variable.data_type == "string" and any(
+                    item is not None
+                    for item in (
+                        aggregate_variable.variability,
+                        aggregate_variable.stuck,
+                        aggregate_variable.physical_range,
+                        aggregate_variable.instrument_range,
+                    )
+                ):
+                    raise ConfigError(
+                        f"string variable {variable_name!r} supports aggregate coverage only"
+                    )
 
     source_path = _resolve_glob(run_path.parent, run.source.path)
     output_root = _resolve_path(run_path.parent, run.output.root)
     _validate_output_separation(source_path, output_root)
-    return LoadedConfig(run, rules, run_path, rules_path, source_path, output_root)
+    return LoadedConfig(
+        run,
+        rules,
+        aggregate_rules,
+        run_path,
+        rules_path,
+        aggregate_rules_path,
+        source_path,
+        output_root,
+    )
 
 
 def validate_run_id(run_id: str) -> str:
@@ -381,6 +608,8 @@ def snapshot_documents(loaded: LoadedConfig) -> tuple[dict[str, Any], dict[str, 
     run_document = loaded.run.model_dump(mode="json")
     run_document["source"]["path"] = loaded.source_path
     run_document["quality"]["rules"] = "quality_rules.yaml"
+    if loaded.aggregate_rules is not None:
+        run_document["quality"]["aggregate_rules"] = "aggregate_quality_rules.yaml"
     run_document["output"]["root"] = str(loaded.output_root)
     return rules_document, run_document
 
@@ -392,6 +621,11 @@ def dump_yaml(document: dict[str, Any]) -> str:
 def _configuration_hash(config: ResolvedConfig) -> str:
     document = {
         "quality_rules": config.rules.model_dump(mode="json"),
+        "aggregate_quality_rules": (
+            config.aggregate_rules.model_dump(mode="json")
+            if config.aggregate_rules is not None
+            else None
+        ),
         "source": {
             **config.run.source.model_dump(mode="json"),
             "path": config.source_path,

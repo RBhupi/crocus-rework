@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from adqat import __version__
+from adqat.aggregate import aggregate_data_schema
 from adqat.compile import QCFlagContext, compile_findings
 from adqat.config import (
     ConfigError,
@@ -22,8 +23,12 @@ from adqat.config import (
     validate_run_id,
 )
 from adqat.findings import check_results_schema, findings_schema, write_frame
-from adqat.minute import minute_data_schema
-from adqat.netcdf import native_a1_filename, write_native_a1
+from adqat.netcdf import (
+    aggregate_b1_filename,
+    native_a1_filename,
+    write_aggregate_b1,
+    write_native_a1,
+)
 from adqat.periods import Period
 from adqat.pointblank import EngineResult
 from adqat.source import SelectedPeriod
@@ -86,7 +91,7 @@ class RunStore:
         engine_result: EngineResult,
         config: ResolvedConfig,
         *,
-        minute_data: Any | None = None,
+        aggregate_data: Any | None = None,
     ) -> tuple[Path, int]:
         final_dir = self.period_dir(period)
         _require_descendant(final_dir, self.run_dir)
@@ -112,32 +117,50 @@ class RunStore:
                 config.run.source.observation_keys,
                 _flag_context(config),
             )
-            minute_rows = 0
-            missing_minute_rows = 0
-            flagged_minute_rows = 0
-            if minute_data is not None:
-                write_frame(minute_data, minute_data_schema(), stage / "minute_data.parquet")
-                minute_rows = minute_data.height
-                missing_minute_rows = minute_data.filter(
-                    minute_data["total_count"] == 0
+            aggregate_rows = 0
+            missing_aggregate_rows = 0
+            flagged_aggregate_rows = 0
+            if aggregate_data is not None:
+                write_frame(
+                    aggregate_data,
+                    aggregate_data_schema(),
+                    stage / "aggregate_data.parquet",
+                )
+                aggregate_rows = aggregate_data.height
+                missing_aggregate_rows = aggregate_data.filter(
+                    aggregate_data["total_count"] == 0
                 ).height
-                flagged_minute_rows = minute_data.filter(
-                    minute_data["qc_bits"] != 0
+                flagged_aggregate_rows = aggregate_data.filter(
+                    aggregate_data["qc_bits"] != 0
                 ).height
             fingerprint, file_count = input_fingerprint(selected.source_files)
             netcdf_name: str | None = None
             if config.run.output.netcdf is not None:
-                netcdf_name = native_a1_filename(config, period)
-                write_native_a1(
-                    selected.data,
-                    stage / "qc_flags.parquet",
-                    stage / netcdf_name,
-                    period,
-                    config,
-                    self.run_id,
-                    fingerprint,
-                    file_count,
-                )
+                if config.run.output.netcdf.product == "aggregate":
+                    if aggregate_data is None:
+                        raise StoreError("aggregate NetCDF output requires aggregate data")
+                    netcdf_name = aggregate_b1_filename(config, period)
+                    write_aggregate_b1(
+                        aggregate_data,
+                        stage / netcdf_name,
+                        period,
+                        config,
+                        self.run_id,
+                        fingerprint,
+                        file_count,
+                    )
+                else:
+                    netcdf_name = native_a1_filename(config, period)
+                    write_native_a1(
+                        selected.data,
+                        stage / "qc_flags.parquet",
+                        stage / netcdf_name,
+                        period,
+                        config,
+                        self.run_id,
+                        fingerprint,
+                        file_count,
+                    )
             success = {
                 "status": "success",
                 "run_id": self.run_id,
@@ -147,9 +170,9 @@ class RunStore:
                 "rows_processed": selected.row_count,
                 "findings": engine_result.findings.height,
                 "flagged_observations": flagged_observations,
-                "minute_rows": minute_rows,
-                "missing_minute_rows": missing_minute_rows,
-                "flagged_minute_rows": flagged_minute_rows,
+                "aggregate_rows": aggregate_rows,
+                "missing_aggregate_rows": missing_aggregate_rows,
+                "flagged_aggregate_rows": flagged_aggregate_rows,
                 "input_fingerprint": fingerprint,
                 "source_file_count": file_count,
                 "netcdf_file": netcdf_name,
@@ -180,6 +203,12 @@ class RunStore:
     def _write_run_files(self, config: ResolvedConfig) -> None:
         rules_document, run_document = snapshot_documents(config.loaded)
         _write_text_atomic(self.run_dir / "quality_rules.yaml", dump_yaml(rules_document))
+        if config.loaded.aggregate_rules is not None:
+            aggregate_document = config.loaded.aggregate_rules.model_dump(mode="json")
+            _write_text_atomic(
+                self.run_dir / "aggregate_quality_rules.yaml",
+                dump_yaml(aggregate_document),
+            )
         _write_text_atomic(self.run_dir / "processing_run.yaml", dump_yaml(run_document))
         metadata = {
             "run_id": self.run_id,
@@ -190,7 +219,11 @@ class RunStore:
             "selection_start": config.run.selection.start.isoformat(),
             "selection_end": config.run.selection.end.isoformat(),
             "processing_period": config.run.processing.period,
-            "aggregation": config.run.processing.aggregation,
+            "aggregation": (
+                config.run.processing.aggregation.model_dump(mode="json")
+                if config.run.processing.aggregation is not None
+                else None
+            ),
             "netcdf": (
                 config.run.output.netcdf.model_dump(mode="json")
                 if config.run.output.netcdf is not None

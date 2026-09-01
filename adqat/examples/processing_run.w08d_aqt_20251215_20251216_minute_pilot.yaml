@@ -10,13 +10,14 @@ source:
 
 quality:
   rules: quality_rules.crocus_wxt_aqt_pilot.yaml
+  aggregate_rules: aggregate_quality_rules.crocus_wxt_aqt_minute_pilot.yaml
   pipeline: basic_qc
 
 selection:
   start: 2025-12-15T00:00:00Z
   end: 2025-12-17T00:00:00Z
 
-processing: {period: 1d, aggregation: 1minute}
+processing: {period: 1d, aggregation: {period: 1, units: minutes}}
 
 work_units:
   - id: w08d_aqt530_20251215_20251216_minute
@@ -28,3 +29,4 @@ work_units:
 
 output:
   root: /nfs/gce/projects/crocus-server-admins/data-rework/crocus-rework-output-tests-only/adqat-minute-pilot-output
+  netcdf: {enabled: true, product: aggregate, site: neiu, instrument: aqt530, data_level: b1}

@@ -108,6 +108,55 @@ def quality_document() -> dict[str, Any]:
     }
 
 
+def aggregate_quality_document() -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "metadata": {
+            "status": "demo",
+            "description": "Synthetic aggregate quality rules for tests.",
+        },
+        "flags": {
+            "insufficient_coverage": {"bit": 0, "description": "Insufficient coverage."},
+            "excessive_variability": {"bit": 1, "description": "Excessive variability."},
+            "stuck_value": {"bit": 2, "description": "Stuck value."},
+            "below_physical_minimum": {"bit": 3, "description": "Below physical minimum."},
+            "above_physical_maximum": {"bit": 4, "description": "Above physical maximum."},
+            "below_instrument_minimum": {
+                "bit": 5,
+                "description": "Below instrument minimum.",
+            },
+            "above_instrument_maximum": {
+                "bit": 6,
+                "description": "Above instrument maximum.",
+            },
+            "reserved": {"bit": 7, "description": "Reserved and always zero."},
+        },
+        "profiles": {
+            "demo_wxt": {
+                "variables": {
+                    "temperature": {
+                        "coverage": {"minimum_valid_count": 1},
+                        "physical_range": {"left": -80, "right": 70},
+                        "instrument_range": {"left": -50, "right": 60},
+                    },
+                    "wind_speed": {
+                        "coverage": {"minimum_valid_count": 1},
+                        "physical_range": {"left": 0, "right": 100},
+                    },
+                }
+            },
+            "demo_aqt": {
+                "variables": {
+                    "co": {
+                        "coverage": {"minimum_valid_count": 1},
+                        "instrument_range": {"left": 0, "right": 100},
+                    }
+                }
+            },
+        },
+    }
+
+
 def run_document(
     source_path: str,
     output_root: str,
@@ -164,8 +213,12 @@ def write_configuration(
     facts = root / "facts"
     source = str(facts / "**" / "*.parquet") if hive else str(facts / "*.parquet")
     rules_path = root / "quality_rules.yaml"
+    aggregate_rules_path = root / "aggregate_quality_rules.yaml"
     run_path = root / "processing_run.yaml"
     rules_path.write_text(yaml.safe_dump(quality_document(), sort_keys=False), encoding="utf-8")
+    aggregate_rules_path.write_text(
+        yaml.safe_dump(aggregate_quality_document(), sort_keys=False), encoding="utf-8"
+    )
     run_path.write_text(
         yaml.safe_dump(
             run_document(

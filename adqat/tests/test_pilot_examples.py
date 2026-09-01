@@ -13,14 +13,10 @@ from adqat.config import load_config
 from adqat.report import build_run_report
 from adqat.runner import run_new
 
-EXAMPLE_RULES = (
-    Path(__file__).parents[1] / "examples" / "quality_rules.crocus_wxt_aqt_pilot.yaml"
-)
+EXAMPLE_RULES = Path(__file__).parents[1] / "examples" / "quality_rules.crocus_wxt_aqt_pilot.yaml"
 EXAMPLES_DIR = Path(__file__).parents[1] / "examples"
 AQT_DATASHEET_RULES = EXAMPLES_DIR / "quality_rules.crocus_aqt530_datasheet_test.yaml"
-AQT_DATASHEET_RUN = (
-    EXAMPLES_DIR / "processing_run.w08d_aqt_20251215_20251216_datasheet_test.yaml"
-)
+AQT_DATASHEET_RUN = EXAMPLES_DIR / "processing_run.w08d_aqt_20251215_20251216_datasheet_test.yaml"
 
 
 def test_hpc_pilot_outputs_are_isolated_from_production_tree() -> None:
@@ -29,9 +25,7 @@ def test_hpc_pilot_outputs_are_isolated_from_production_tree() -> None:
         "processing_run.w08d_aqt_20251215_20251216_pilot.yaml",
     ):
         document = yaml.safe_load((EXAMPLES_DIR / filename).read_text(encoding="utf-8"))
-        assert "/crocus-rework-output/wxt-aqt-production-v5/" in document["source"][
-            "path"
-        ]
+        assert "/crocus-rework-output/wxt-aqt-production-v5/" in document["source"]["path"]
         assert document["output"]["root"] == (
             "/nfs/gce/projects/crocus-server-admins/data-rework/"
             "crocus-rework-output-tests-only/adqat-pilot-output"
@@ -39,7 +33,7 @@ def test_hpc_pilot_outputs_are_isolated_from_production_tree() -> None:
         assert "netcdf" not in document["output"]
 
 
-def test_minute_pilot_examples_are_dense_parquet_only() -> None:
+def test_minute_pilot_examples_define_aggregate_rules_and_netcdf() -> None:
     expected = {
         "processing_run.w08d_wxt_20251215_20251216_minute_pilot.yaml": (
             "crocus_wxt536_pilot",
@@ -53,8 +47,11 @@ def test_minute_pilot_examples_are_dense_parquet_only() -> None:
     for filename, (profile_name, representative_method) in expected.items():
         loaded = load_config(EXAMPLES_DIR / filename)
         assert loaded.run.processing.period == "1d"
-        assert loaded.run.processing.aggregation == "1minute"
-        assert loaded.run.output.netcdf is None
+        assert loaded.run.processing.aggregation_seconds == 60
+        assert loaded.run.processing.aggregation_label == "1min"
+        assert loaded.run.output.netcdf is not None
+        assert loaded.run.output.netcdf.product == "aggregate"
+        assert loaded.aggregate_rules is not None
         profile = loaded.rules.profiles[profile_name]
         assert all(variable.aggregation is not None for variable in profile.variables.values())
         assert representative_method in {
@@ -138,9 +135,7 @@ def test_aqt_datasheet_profile_runs_end_to_end(tmp_path: Path) -> None:
     )
 
     summary = run_new(run_path, "w08d_aqt_datasheet", "aqt-datasheet-test")
-    period = next(
-        (summary.run_dir / "work_units" / "w08d_aqt_datasheet").iterdir()
-    )
+    period = next((summary.run_dir / "work_units" / "w08d_aqt_datasheet").iterdir())
     findings = pl.read_parquet(period / "findings.parquet")
     assert set(findings.select("check_id", "bit").rows()) == {
         ("aqt_relative_humidity_instrument", 3),
@@ -226,9 +221,7 @@ def test_wxt_then_aqt_pilot_profiles_run_through_identical_pipeline(tmp_path: Pa
         ],
     )
     wxt_summary = run_new(wxt_config, "w08d_wxt_pilot", "wxt-pilot")
-    wxt_period = sorted(
-        (wxt_summary.run_dir / "work_units" / "w08d_wxt_pilot").iterdir()
-    )[0]
+    wxt_period = sorted((wxt_summary.run_dir / "work_units" / "w08d_wxt_pilot").iterdir())[0]
     wxt_findings = pl.read_parquet(wxt_period / "findings.parquet")
     assert set(wxt_findings.select("check_id", "bit").rows()) == {
         ("wxt_air_temperature_missing", 0),
@@ -299,9 +292,7 @@ def test_wxt_then_aqt_pilot_profiles_run_through_identical_pipeline(tmp_path: Pa
         ],
     )
     aqt_summary = run_new(aqt_config, "w08d_aqt_pilot", "aqt-pilot")
-    aqt_period = sorted(
-        (aqt_summary.run_dir / "work_units" / "w08d_aqt_pilot").iterdir()
-    )[0]
+    aqt_period = sorted((aqt_summary.run_dir / "work_units" / "w08d_aqt_pilot").iterdir())[0]
     aqt_findings = pl.read_parquet(aqt_period / "findings.parquet")
     assert set(aqt_findings.select("check_id", "bit").rows()) == {
         ("aqt_carbon_monoxide_instrument", 3),

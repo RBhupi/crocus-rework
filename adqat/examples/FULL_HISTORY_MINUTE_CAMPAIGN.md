@@ -1,6 +1,6 @@
-# CROCUS full-history one-minute campaign
+# CROCUS full-history fixed-period aggregation campaign
 
-This runbook creates dense one-minute WXT536 and AQT530 products while leaving
+This runbook creates dense fixed-period WXT536 and AQT530 products while leaving
 the native CROCUS Parquet facts read-only. The quality rules remain marked
 `pilot`; manufacturer limits are sourced from the bundled Vaisala datasheets,
 while broader physical screens are engineering candidates pending science
@@ -10,16 +10,22 @@ approval.
 
 For each instrument and UTC processing day, ADQAT writes:
 
-- `minute_data.parquet`: one row per minute and configured variable, including
-  explicit rows for entirely absent minutes;
+- `aggregate_data.parquet`: one row per configured interval and variable,
+  including explicit rows for entirely absent intervals;
 - `findings.parquet`: sparse raw check evidence;
 - `qc_flags.parquet`: sparse nonzero raw observation masks;
 - `check_results.parquet`: raw check totals;
+- optional wide NetCDF with paired `qc_<variable>` unsigned 8-bit fields;
 - `success.json`: atomic resume marker and row counts.
 
 There is no 1-second product, raw timestamp grid, interpolation, synthetic raw
-observation, or NetCDF output. Daily directories are restartable physical
+observation. Daily directories are restartable physical
 partitions of one logical per-instrument Parquet table.
+
+The raw and aggregate rule sets are separate. Aggregate bits are fixed to:
+bit 0 insufficient coverage, bit 1 excessive variability, bit 2 stuck value,
+bits 3/4 below/above physical limits, bits 5/6 below/above instrument limits,
+and bit 7 reserved/always zero.
 
 ## 1. Install the checked-out revision
 
@@ -69,7 +75,7 @@ for run_id in (
     "w08d-wxt-minute-20251215-16-v1",
     "w08d-aqt-minute-20251215-16-v1",
 ):
-    pattern = f"{root}/runs/{run_id}/work_units/*/*/minute_data.parquet"
+    pattern = f"{root}/runs/{run_id}/work_units/*/*/aggregate_data.parquet"
     row = connection.execute("""
         SELECT count(*) AS row_count,
                sum(total_count = 0) missing_rows,
@@ -81,7 +87,9 @@ for run_id in (
 PY
 ```
 
-Before the full campaign, inspect wind wraparound and cumulative/categorical
+The supplied pilot jobs use `{period: 1, units: minutes}`. The same code accepts
+fixed durations in seconds, minutes, or hours. Before the full campaign, inspect
+wind wraparound and cumulative/categorical
 aggregation with DuckDB. `wind_direction` uses `circular_mean`, rain/hail use
 `last`, and heater status uses `mode`.
 
@@ -102,6 +110,16 @@ MINUTE_OUT=/nfs/gce/projects/crocus-server-admins/data-rework/crocus-rework-outp
 Review the generated `manifest.json` and several YAML files below
 `$MINUTE_OUT/campaigns/minute-aqt-full-v1/`. The inventory must contain exactly
 one instrument per VSN; the generator rejects duplicates.
+
+The generator writes Parquet by default. To also write NetCDF, supply a reviewed
+CSV containing exactly `vsn,site` columns:
+
+```bash
+--netcdf-site-map /path/to/vsn_site_map.csv
+```
+
+This prevents ADQAT from inventing ARM-style site identifiers. Each configured
+aggregation duration must divide one UTC day exactly for NetCDF output.
 
 ## 4. Run AQT under nohup
 
@@ -147,11 +165,11 @@ nohup "$ADQAT_ENV/bin/python" examples/full_history_minute_campaign.py \
 
 ```sql
 SELECT vsn, variable,
-       count(*) AS minute_rows,
-       sum(total_count = 0) AS entirely_missing_minutes,
-       sum(qc_bits <> 0) AS flagged_minutes
+       count(*) AS aggregate_rows,
+       sum(total_count = 0) AS entirely_missing_intervals,
+       sum(qc_bits <> 0) AS flagged_intervals
 FROM read_parquet(
-  '/nfs/gce/projects/crocus-server-admins/data-rework/crocus-rework-output-tests-only/adqat-minute-full-output/runs/*/work_units/*/*/minute_data.parquet',
+  '/nfs/gce/projects/crocus-server-admins/data-rework/crocus-rework-output-tests-only/adqat-minute-full-output/runs/*/work_units/*/*/aggregate_data.parquet',
   union_by_name = true
 )
 GROUP BY vsn, variable

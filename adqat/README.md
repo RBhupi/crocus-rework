@@ -74,17 +74,29 @@ missing_values: [-9999.9]
 String variables declare `data_type: string` and may use
 `col_vals_not_null` plus `missing_strings`. Range checks remain numeric-only.
 
-An optional dense one-minute product is enabled with:
+An optional dense fixed-period product is enabled with an explicit duration:
 
 ```yaml
-processing: {period: 1d, aggregation: 1minute}
+quality:
+  rules: quality_rules.yaml
+  aggregate_rules: aggregate_quality_rules.yaml
+  pipeline: basic_qc
+processing:
+  period: 1d
+  aggregation: {period: 10, units: seconds}
 ```
+
+Aggregation units are `seconds`, `minutes`, or `hours`. For daily NetCDF
+publication the duration must divide one UTC day exactly. A one-minute product
+uses `{period: 1, units: minutes}`.
 
 Every variable in the selected profile then declares `aggregation` as `mean`,
 `circular_mean`, `mode`, or `last`. Wind direction uses `circular_mean`;
 cumulative rain/hail and uptime use `last`; categorical status uses `mode`.
 Only raw observations passing all configured direct-value checks contribute to
-the representative minute value and statistics.
+the representative aggregate and statistics. Raw flag bits are not propagated:
+the separate aggregate rules produce an unsigned 8-bit mask with bits 0–6
+defined and bit 7 reserved/always zero.
 
 ## Run
 
@@ -118,40 +130,47 @@ Each run represents one work unit:
 runs/<run-id>/
   run.json
   quality_rules.yaml
+  aggregate_quality_rules.yaml  # when aggregation is enabled
   processing_run.yaml
   work_units/<work-unit-id>/<period-id>/
     findings.parquet
     check_results.parquet
     qc_flags.parquet
-    minute_data.parquet  # when processing.aggregation is 1minute
+    aggregate_data.parquet  # when processing.aggregation is configured
     <site>.<instrument>.<vsn>.native.a1.<start>-<end>.nc  # when enabled
+    <site>.<instrument>.<vsn>.<interval>.b1.<start>-<end>.nc  # aggregate NetCDF
     success.json
 ```
 
-Native Level 1 NetCDF is opt-in through `output.netcdf`. It requires complete
+NetCDF is opt-in through `output.netcdf`. It requires complete
 UTC-day selections, carries nanosecond source timestamps, joins sparse flags
-back to every selected observation, writes required CROCUS provenance,
-and reopens each file for verification before publishing the period. This is a
-backward-compatible native `a1` slice and cannot be combined with the current
-one-minute workflow.
+back to every selected observation for the backward-compatible native `a1`
+product, or writes a wide aggregate `b1` product with paired `qc_<variable>`
+unsigned 8-bit fields. Numeric aggregate variables use `_FillValue=-999.0`;
+their QC field remains present and sets bit 0 when coverage is insufficient.
+Every file is reopened and verified before atomic publication.
 
-`minute_data.parquet` contains one row for every UTC minute and configured
-variable, including minutes with no source observation. Empty variable/minutes
-have null values, zero counts, `aggregate_valid=false`, and the
-`missing_sample` bit. Observed minutes include total/valid/invalid counts,
-per-raw-flag counts, valid fraction, observed row rate, maximum within-minute
+`aggregate_data.parquet` contains one row for every configured fixed interval
+and variable, including intervals with no source observation. Empty intervals
+have null values, zero counts, `aggregate_valid=false`, and aggregate QC bit 0.
+Observed intervals include total/valid/invalid counts,
+per-raw-flag counts, valid fraction, observed row rate, maximum within-interval
 timestamp gap, mean, median, population standard deviation, minimum, maximum,
 quartiles, and IQR. Raw timestamps are neither regularized nor interpolated.
-Partial-minute completeness is diagnostic only because no deployment cadence
-has been asserted.
+Coverage, variability, stuck, and aggregate range thresholds are explicit in
+the separate aggregate-rule YAML.
+
+Aggregate QC bits are fixed: 0 insufficient coverage, 1 excessive variability,
+2 stuck/constant, 3 below physical minimum, 4 above physical maximum, 5 below
+instrument minimum, 6 above instrument maximum, and 7 reserved/always zero.
 
 Daily directories are atomic restart units, not separate logical products.
-Query all minute files for an instrument as one Parquet relation:
+Query all aggregate files for an instrument as one Parquet relation:
 
 ```sql
 SELECT *
 FROM read_parquet(
-  '/results/adqat/runs/<run-id>/work_units/*/*/minute_data.parquet',
+  '/results/adqat/runs/<run-id>/work_units/*/*/aggregate_data.parquet',
   union_by_name = true
 )
 ORDER BY time, variable;

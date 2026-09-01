@@ -9,7 +9,7 @@ import numpy as np
 import pyarrow.parquet as pq
 import pytest
 import yaml
-from conftest import BASE_NS, write_configuration, write_facts
+from conftest import BASE_NS, aggregate_quality_document, write_configuration, write_facts
 
 from adqat.cli import main
 from adqat.runner import compile_run, resume_run, run_new
@@ -67,15 +67,19 @@ def test_end_to_end_run_resume_and_recompile(tmp_path: Path) -> None:
     assert flags.is_file()
     assert pq.read_table(flags).equals(before_compile)
 
-    relation = duckdb.connect().execute(
-        """
+    relation = (
+        duckdb.connect()
+        .execute(
+            """
         SELECT vsn, qc_bits, count(*) AS observations
         FROM read_parquet(?, union_by_name = true)
         WHERE vsn = ? AND qc_bits <> 0
         GROUP BY vsn, qc_bits
         """,
-        [str(run_dir / "work_units" / "*" / "*" / "qc_flags.parquet"), "W08E"],
-    ).fetchall()
+            [str(run_dir / "work_units" / "*" / "*" / "qc_flags.parquet"), "W08E"],
+        )
+        .fetchall()
+    )
     assert relation == [("W08E", (1 << 2) | (1 << 3), 1)]
 
 
@@ -194,12 +198,8 @@ def test_writes_and_verifies_native_a1_netcdf(tmp_path: Path) -> None:
         assert len(dataset.dimensions["observation"]) == 2
         assert dataset.getncattr("crocus_data_level") == "a1"
         assert dataset.getncattr("site_id") == "neiu"
-        assert dataset.getncattr("time_coverage_start") == (
-            "2025-01-01T00:00:00.123456789Z"
-        )
-        assert dataset.getncattr("time_coverage_end") == (
-            "2025-01-01T00:00:01.987654321Z"
-        )
+        assert dataset.getncattr("time_coverage_start") == ("2025-01-01T00:00:00.123456789Z")
+        assert dataset.getncattr("time_coverage_end") == ("2025-01-01T00:00:01.987654321Z")
         assert dataset.getncattr("time_coverage_duration") == "PT1.864197532S"
         series_id = np.asarray(dataset.variables["series_id"][0], dtype=np.uint8).tobytes()
         assert series_id.hex() == "00000000000000000000000000000000"
@@ -208,3 +208,71 @@ def test_writes_and_verifies_native_a1_netcdf(tmp_path: Path) -> None:
     success = json.loads((period / "success.json").read_text(encoding="utf-8"))
     assert success["netcdf_file"] == filename
     assert main(["report", str(summary.run_dir)]) == 0
+
+
+def test_writes_arm_style_aggregate_netcdf_with_unsigned_eight_bit_qc(
+    tmp_path: Path,
+) -> None:
+    run_path = write_configuration(tmp_path)
+    raw_rules = yaml.safe_load((tmp_path / "quality_rules.yaml").read_text(encoding="utf-8"))
+    for profile in raw_rules["profiles"].values():
+        for variable in profile["variables"].values():
+            variable["aggregation"] = "mean"
+    (tmp_path / "quality_rules.yaml").write_text(
+        yaml.safe_dump(raw_rules, sort_keys=False), encoding="utf-8"
+    )
+    (tmp_path / "aggregate_quality_rules.yaml").write_text(
+        yaml.safe_dump(aggregate_quality_document(), sort_keys=False), encoding="utf-8"
+    )
+    run = yaml.safe_load(run_path.read_text(encoding="utf-8"))
+    run["quality"]["aggregate_rules"] = "aggregate_quality_rules.yaml"
+    run["processing"]["aggregation"] = {"period": 1, "units": "minutes"}
+    run["output"]["netcdf"] = {
+        "enabled": True,
+        "product": "aggregate",
+        "site": "neiu",
+        "instrument": "wxt536",
+        "data_level": "b1",
+    }
+    run_path.write_text(yaml.safe_dump(run, sort_keys=False), encoding="utf-8")
+    write_facts(tmp_path, [{"time": BASE_NS + 1_000_000_000, "value": 10.0}])
+
+    summary = run_new(run_path, "demo_wxt_work_unit", "aggregate-netcdf-run")
+    assert (summary.run_dir / "aggregate_quality_rules.yaml").is_file()
+    period = next((summary.run_dir / "work_units" / "demo_wxt_work_unit").iterdir())
+    filename = "neiu.wxt536.W08E.1min.b1.20250101T000000Z-20250102T000000Z.nc"
+    netcdf_path = period / filename
+    assert netcdf_path.is_file()
+    with netCDF4.Dataset(netcdf_path) as dataset:
+        dataset.set_auto_mask(False)
+        assert len(dataset.dimensions["time"]) == 1_440
+        assert dataset.getncattr("crocus_data_level") == "b1"
+        assert dataset.getncattr("aggregation_period") == 1
+        assert dataset.getncattr("aggregation_period_units") == "minutes"
+        assert dataset.getncattr("aggregation_period_seconds") == 60
+        assert int(dataset.variables["time"][1] - dataset.variables["time"][0]) == 60
+        temperature = dataset.variables["temperature"]
+        qc_temperature = dataset.variables["qc_temperature"]
+        assert temperature.getncattr("ancillary_variables") == "qc_temperature"
+        assert float(temperature[0]) == 10.0
+        assert float(temperature[1]) == -999.0
+        assert qc_temperature.dtype == np.dtype("uint8")
+        assert int(qc_temperature[0]) == 0
+        assert int(qc_temperature[1]) == 1
+        assert int(dataset.variables["qc_wind_speed"][0]) == 1
+        assert list(np.asarray(qc_temperature.flag_masks, dtype=np.uint8)) == [
+            1,
+            2,
+            4,
+            8,
+            16,
+            32,
+            64,
+            128,
+        ]
+        assert qc_temperature.getncattr("qc_bit_8_description").startswith("Reserved")
+        assert qc_temperature.getncattr("qc_bit_8_assessment") == "Indeterminate"
+        assert "temperature_mean" in dataset.variables
+        assert "temperature_maximum_gap" in dataset.variables
+    success = json.loads((period / "success.json").read_text(encoding="utf-8"))
+    assert success["netcdf_file"] == filename

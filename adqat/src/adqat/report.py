@@ -50,6 +50,16 @@ def build_run_report(run_dir: str | Path) -> dict[str, Any]:
             if existing.config.rules.metadata is not None
             else "unspecified"
         ),
+        "aggregate_rule_status": (
+            existing.config.aggregate_rules.metadata.status
+            if existing.config.aggregate_rules is not None
+            else "not_configured"
+        ),
+        "aggregation": (
+            existing.config.run.processing.aggregation.model_dump(mode="json")
+            if existing.config.run.processing.aggregation is not None
+            else None
+        ),
         "periods": len(periods),
         "rows_processed": sum(int(item["rows_processed"]) for item in successes),
         "findings": sum(int(item["findings"]) for item in successes),
@@ -57,12 +67,12 @@ def build_run_report(run_dir: str | Path) -> dict[str, Any]:
             _flagged_observations(period, item)
             for period, item in zip(periods, successes, strict=True)
         ),
-        "minute_rows": sum(int(item.get("minute_rows", 0)) for item in successes),
-        "missing_minute_rows": sum(
-            int(item.get("missing_minute_rows", 0)) for item in successes
+        "aggregate_rows": sum(int(item.get("aggregate_rows", 0)) for item in successes),
+        "missing_aggregate_rows": sum(
+            int(item.get("missing_aggregate_rows", 0)) for item in successes
         ),
-        "flagged_minute_rows": sum(
-            int(item.get("flagged_minute_rows", 0)) for item in successes
+        "flagged_aggregate_rows": sum(
+            int(item.get("flagged_aggregate_rows", 0)) for item in successes
         ),
         "netcdf_files": [
             str(period / item["netcdf_file"])
@@ -78,13 +88,15 @@ def format_run_report(report: dict[str, Any]) -> str:
         f"run_id: {report['run_id']}",
         f"work_unit_id: {report['work_unit_id']}",
         f"rule_status: {report['rule_status']}",
+        f"aggregate_rule_status: {report['aggregate_rule_status']}",
+        f"aggregation: {report['aggregation']}",
         f"periods: {report['periods']}",
         f"rows_processed: {report['rows_processed']}",
         f"findings: {report['findings']}",
         f"flagged_observations: {report['flagged_observations']}",
-        f"minute_rows: {report['minute_rows']}",
-        f"missing_minute_rows: {report['missing_minute_rows']}",
-        f"flagged_minute_rows: {report['flagged_minute_rows']}",
+        f"aggregate_rows: {report['aggregate_rows']}",
+        f"missing_aggregate_rows: {report['missing_aggregate_rows']}",
+        f"flagged_aggregate_rows: {report['flagged_aggregate_rows']}",
         f"netcdf_files: {len(report['netcdf_files'])}",
         "",
         "variable\tcheck_id\tflag\tbit\ttested\tfailed\tfraction_failed",

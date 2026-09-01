@@ -1,9 +1,9 @@
-# ADQAT current one-minute QA/QC: implementation and HPC handoff
+# ADQAT current fixed-period QA/QC and NetCDF: implementation and HPC handoff
 
-**Status:** Implemented locally; real-data two-day minute validation is the next
+**Status:** Implemented locally; real-data two-day aggregate validation is the next
 required gate before the full-history campaign.
 
-**ADQAT target:** 0.1.3 current pipeline. This is not the proposed ADQAT 0.2
+**ADQAT target:** 0.1.4 current pipeline. This is not the proposed ADQAT 0.2
 architecture.
 
 **Purpose:** Preserve the decisions, implementation context, data inventory,
@@ -15,10 +15,11 @@ new session on the remote compute host without reconstructing the discussion.
 Process the complete CROCUS WXT536 and AQT530 long-format Parquet facts into:
 
 1. sparse evidence for invalid native observations; and
-2. a dense, queryable one-minute Parquet product for every configured variable.
+2. a dense, queryable fixed-period Parquet product for every configured variable; and
+3. an optional wide NetCDF product with a paired unsigned 8-bit QC variable.
 
-Native input must remain read-only. The current campaign must not create a
-1-second product or NetCDF. QA/QC limits are candidate pilot rules based on the
+Native input must remain read-only. The current campaign does not create a
+1-second product. QA/QC limits are candidate pilot rules based on the
 manufacturer datasheets and sensible physical screens; they are not yet an
 approved CROCUS scientific standard.
 
@@ -32,21 +33,26 @@ approved CROCUS scientific standard.
   - actual null, NaN, or configured sentinel;
   - physical range;
   - manufacturer instrument/operating range.
-- A raw observation is eligible for one-minute aggregation only when its raw QC
+- A raw observation is eligible for aggregation only when its raw QC
   mask is zero.
 - Retain only bad raw observations in the sparse `qc_flags.parquet` table.
-- Create one dense row for every UTC minute and every configured variable.
-- If an entire variable/minute is absent, create the minute row with null value,
-  zero counts, `aggregate_valid=false`, and the `missing_sample` bit.
-- Do not flag partially sampled minutes as incomplete until deployed cadence is
-  explicitly known.
+- Create one dense row for every configured UTC interval and variable. The
+  interval is configured as `{period: <integer>, units: seconds|minutes|hours}`.
+- Aggregate QC is independent from raw QC and is stored as `uint8`. Bit 0 is
+  insufficient coverage; bit 1 excessive variability; bit 2 stuck/constant;
+  bits 3/4 below/above physical limits; bits 5/6 below/above instrument limits;
+  bit 7 is reserved and always zero.
+- A missing or insufficient interval has a null Parquet value. In NetCDF the
+  data variable contains `_FillValue=-999.0` and its QC value is 1 (bit 0), not
+  missing.
 - Daily directories are atomic processing/resume partitions. They form one
   logical per-instrument table when read through a Parquet glob; they are not
   independent scientific products.
 - Keep `instrument_id` as immutable provenance and an equality filter. It is not
   required in the source glob because the current inventory contains one
   instrument per VSN.
-- Do not produce NetCDF in this workflow.
+- NetCDF uses a dense time coordinate, paired `qc_<variable>` unsigned 8-bit
+  fields, count/statistic diagnostics, provenance, and atomic publication.
 
 ## 3. Why nominal 10 Hz is not a current completeness rule
 
@@ -56,15 +62,15 @@ therefore not sufficient evidence of independent sensor cadence.
 
 Current behavior:
 
-- `observed_rate_hz = total_count / 60` is diagnostic metadata;
+- `observed_rate_hz = total_count / aggregation_period_seconds` is diagnostic metadata;
 - `maximum_gap_seconds` records the largest observed within-minute timestamp
   separation;
-- a completely absent minute is flagged;
+- a completely absent interval sets aggregate bit 0;
 - no exact timestamp expectation or partial-minute completeness threshold is
   enforced.
 
-A future scientifically approved cadence can add a configured minimum valid
-count or valid fraction without changing raw ingestion.
+Coverage is controlled by explicit minimum valid count and optional minimum
+valid fraction in the separate aggregate-rule YAML, without changing ingestion.
 
 ## 4. Input and compute environment
 
@@ -175,11 +181,11 @@ total: 257,554,080 minute-variable rows before Parquet compression
 These are much smaller than native facts but are not trivial. Check `dfq`
 before launch and monitor output growth during AQT before starting WXT.
 
-## 7. Current QC bits
+## 7. Raw and aggregate QC bits
 
 ```text
 bit 0: missing_value
-bit 1: missing_sample (entire configured variable/minute absent)
+bit 1: missing_sample (declared but unused by current raw processing)
 bit 2: physical_range
 bit 3: instrument_range
 ```
@@ -187,19 +193,33 @@ bit 3: instrument_range
 Raw `qc_flags.parquet` contains only nonzero masks. Multiple failures for one
 raw observation are compiled using unsigned 64-bit `BIT_OR`.
 
-The dense minute `qc_bits` is the OR of raw failure bits observed in that minute.
-For a variable/minute with no raw row, it is bit 1. `aggregate_valid` means at
-least one valid raw value contributed; it is separate from the diagnostic mask.
-
-## 8. One-minute output schema and statistics
-
-`minute_data.parquet` contains identity/provenance, representative values,
-counts, diagnostics, statistics, and minute QC:
+The aggregate `qc_bits` column is independent and strictly unsigned 8-bit:
 
 ```text
-time                         UTC minute start, timestamp[ns]
+bit 0: insufficient coverage or no valid aggregate
+bit 1: excessive variability within the aggregation interval
+bit 2: stuck/constant value within the aggregation interval
+bit 3: aggregate below physical minimum
+bit 4: aggregate above physical maximum
+bit 5: aggregate below instrument minimum
+bit 6: aggregate above instrument maximum
+bit 7: reserved; always zero
+```
+
+Raw failures only exclude inputs and affect the count diagnostics. They are not
+ORed into the aggregate mask. `aggregate_valid` is false exactly when bit 0 is
+set; other aggregate flags preserve the calculated value for review.
+
+## 8. Fixed-period output schema and statistics
+
+`aggregate_data.parquet` contains identity/provenance, representative values,
+counts, diagnostics, statistics, and aggregate QC:
+
+```text
+time                         UTC aggregation-interval start, timestamp[ns]
 sensor, vsn, instrument_id
 variable, units, aggregation_method
+aggregation_period, aggregation_period_units, aggregation_period_seconds
 value_float64, value_string
 total_count, valid_count, invalid_count
 missing_value_count
@@ -287,6 +307,7 @@ Current rules and two-day configs:
 
 ```text
 examples/quality_rules.crocus_wxt_aqt_pilot.yaml
+examples/aggregate_quality_rules.crocus_wxt_aqt_minute_pilot.yaml
 examples/processing_run.w08d_wxt_20251215_20251216_minute_pilot.yaml
 examples/processing_run.w08d_aqt_20251215_20251216_minute_pilot.yaml
 ```
@@ -301,15 +322,15 @@ examples/FULL_HISTORY_MINUTE_CAMPAIGN.md
 Tests:
 
 ```text
-tests/test_minute.py
+tests/test_aggregate.py
 tests/test_pilot_examples.py
 ```
 
-ADQAT was bumped to version 0.1.3. Configuration remains schema version 1.
-Minute aggregation is opt-in:
+ADQAT was bumped to version 0.1.4. Configuration remains schema version 1.
+Fixed-period aggregation is opt-in:
 
 ```yaml
-processing: {period: 1d, aggregation: 1minute}
+processing: {period: 1d, aggregation: {period: 1, units: minutes}}
 ```
 
 Every selected profile variable must then declare one of `mean`,
@@ -319,7 +340,7 @@ type-incompatible methods.
 ## 11. Local verification already completed
 
 ```text
-pytest: 41 tests passed
+pytest: 46 tests passed
 Ruff: passed
 git diff --check: passed
 generated campaign configurations: 37
@@ -522,12 +543,12 @@ All minute periods across all runs can be queried directly:
 
 ```sql
 SELECT vsn, variable,
-       count(*) AS minute_rows,
-       sum(total_count = 0) AS entirely_missing_minutes,
+       count(*) AS aggregate_rows,
+       sum(total_count = 0) AS entirely_missing_intervals,
        sum(aggregate_valid) AS valid_aggregate_minutes,
-       sum(qc_bits <> 0) AS flagged_minutes
+       sum(qc_bits <> 0) AS flagged_intervals
 FROM read_parquet(
-  '/nfs/gce/projects/crocus-server-admins/data-rework/crocus-rework-output-tests-only/adqat-minute-full-output/runs/*/work_units/*/*/minute_data.parquet',
+  '/nfs/gce/projects/crocus-server-admins/data-rework/crocus-rework-output-tests-only/adqat-minute-full-output/runs/*/work_units/*/*/aggregate_data.parquet',
   union_by_name = true
 )
 GROUP BY vsn, variable
@@ -552,15 +573,16 @@ pushdown apply through DuckDB.
 ## 15. Acceptance criteria for the full campaign
 
 - All 15 AQT and 22 WXT instrument jobs complete successfully.
-- Every expected period contains `success.json`, `minute_data.parquet`,
+- Every expected period contains `success.json`, `aggregate_data.parquet`,
   `findings.parquet`, `qc_flags.parquet`, and `check_results.parquet`.
-- No NetCDF or 1-second products are produced.
+- NetCDF is produced only when an approved VSN-to-site mapping is configured;
+  no 1-second intermediate product is produced.
 - Output remains entirely below the tests-only output root.
 - Production source files retain their original size and modification time.
-- Minute rows are unique by `time` and `variable` within a work unit.
+- Aggregate rows are unique by `time` and `variable` within a work unit.
 - `total_count >= valid_count`; `invalid_count = total_count - valid_count`.
-- `aggregate_valid` is exactly `valid_count > 0`.
-- Entirely missing variable/minutes have bit 1 and null representative values.
+- `aggregate_valid` is false exactly when aggregate bit 0 is set.
+- Missing or insufficient intervals have bit 0 and null representative values.
 - Sparse raw masks are always nonzero and unique by raw observation identity.
 - Wind direction behaves correctly across 0/360°.
 - Cumulative and categorical variables use their configured methods.
@@ -571,14 +593,16 @@ pushdown apply through DuckDB.
 ## 16. Known limitations and explicitly deferred work
 
 - Rules are `pilot`, not scientifically approved production QA/QC.
-- No partial-minute completeness threshold exists until cadence is explicit.
-- No stuck/constant or excessive-variability flags are enabled. The minute
+- Coverage thresholds must be explicit in aggregate-rule YAML; no native sample
+  timestamps are inferred from a nominal cadence.
+- No stuck/constant or excessive-variability flags are enabled. The aggregate
   product contains statistics needed to study and approve those thresholds.
 - No cross-variable consistency tests are enabled, such as PM ordering or
   wind-speed/direction coupling.
 - No aggregation across daily atomic partitions is required; DuckDB provides
   the logical table. Optional later compaction must preserve atomic provenance.
-- No wide NetCDF product is created in this workflow.
+- Wide NetCDF requires reviewed site IDs; the campaign generator never invents
+  them and enables NetCDF only with `--netcdf-site-map`.
 - NetCDF/CSV/database input adapters remain out of scope; current input is the
   long Parquet adapter.
 - The proposed ADQAT 0.2 product architecture remains a separate future plan.
@@ -589,7 +613,7 @@ Copy the following into the new session after opening the repository on the
 compute host:
 
 ```text
-Continue the ADQAT 0.1.3 current one-minute QA/QC rollout using
+Continue the ADQAT current fixed-period QA/QC rollout using
 docs/plans/adqat-current-minute-qc-hpc-handoff.md as the source of truth.
 
 We are on the HPC/compute host with access to the production CROCUS Parquet

@@ -4,7 +4,13 @@ from pathlib import Path
 
 import pytest
 import yaml
-from conftest import quality_document, run_document, write_configuration, write_facts
+from conftest import (
+    aggregate_quality_document,
+    quality_document,
+    run_document,
+    write_configuration,
+    write_facts,
+)
 
 from adqat.config import ConfigError, load_config
 
@@ -102,4 +108,51 @@ def test_netcdf_requires_complete_utc_days(tmp_path: Path) -> None:
     run_path = tmp_path / "processing_run.yaml"
     run_path.write_text(yaml.safe_dump(run), encoding="utf-8")
     with pytest.raises(ConfigError, match="UTC midnight"):
+        load_config(run_path)
+
+
+def test_aggregate_rules_require_fixed_uint8_layout_and_matching_variables(
+    tmp_path: Path,
+) -> None:
+    rules = quality_document()
+    for profile in rules["profiles"].values():
+        for variable in profile["variables"].values():
+            variable["aggregation"] = "mean"
+    (tmp_path / "quality_rules.yaml").write_text(yaml.safe_dump(rules), encoding="utf-8")
+    aggregate = aggregate_quality_document()
+    aggregate["flags"]["reserved"]["bit"] = 6
+    (tmp_path / "aggregate_quality_rules.yaml").write_text(
+        yaml.safe_dump(aggregate), encoding="utf-8"
+    )
+    run = run_document(str(tmp_path / "facts" / "*.parquet"), str(tmp_path / "results"))
+    run["quality"]["aggregate_rules"] = "aggregate_quality_rules.yaml"
+    run["processing"]["aggregation"] = {"period": 10, "units": "seconds"}
+    run_path = tmp_path / "processing_run.yaml"
+    run_path.write_text(yaml.safe_dump(run), encoding="utf-8")
+    with pytest.raises(ConfigError, match="fixed eight-bit"):
+        load_config(run_path)
+
+
+def test_aggregate_netcdf_duration_must_divide_utc_day(tmp_path: Path) -> None:
+    rules = quality_document()
+    for profile in rules["profiles"].values():
+        for variable in profile["variables"].values():
+            variable["aggregation"] = "mean"
+    (tmp_path / "quality_rules.yaml").write_text(yaml.safe_dump(rules), encoding="utf-8")
+    (tmp_path / "aggregate_quality_rules.yaml").write_text(
+        yaml.safe_dump(aggregate_quality_document()), encoding="utf-8"
+    )
+    run = run_document(str(tmp_path / "facts" / "*.parquet"), str(tmp_path / "results"))
+    run["quality"]["aggregate_rules"] = "aggregate_quality_rules.yaml"
+    run["processing"]["aggregation"] = {"period": 7, "units": "seconds"}
+    run["output"]["netcdf"] = {
+        "enabled": True,
+        "product": "aggregate",
+        "site": "neiu",
+        "instrument": "wxt536",
+        "data_level": "b1",
+    }
+    run_path = tmp_path / "processing_run.yaml"
+    run_path.write_text(yaml.safe_dump(run), encoding="utf-8")
+    with pytest.raises(ConfigError, match="divide the fixed processing period"):
         load_config(run_path)

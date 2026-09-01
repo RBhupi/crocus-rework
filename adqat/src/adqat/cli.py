@@ -5,6 +5,7 @@ import json
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 from adqat.config import LoadedConfig, load_config, snapshot_documents
 from adqat.report import build_run_report, format_run_report
@@ -59,7 +60,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         if arguments.command == "config":
             loaded = load_config(arguments.processing_run)
             rules, run = snapshot_documents(loaded)
-            print(json.dumps({"quality_rules": rules, "processing_run": run}, indent=2))
+            document: dict[str, Any] = {"quality_rules": rules, "processing_run": run}
+            if loaded.aggregate_rules is not None:
+                document["aggregate_quality_rules"] = loaded.aggregate_rules.model_dump(mode="json")
+            print(json.dumps(document, indent=2))
             return 0
         if arguments.command == "run":
             summary = run_new(
@@ -95,11 +99,11 @@ def _print_summary(summary: RunSummary) -> None:
         f"empty={summary.empty_periods} findings={summary.findings} "
         f"flagged_observations={summary.flagged_observations}"
     )
-    if summary.minute_rows:
+    if summary.aggregate_rows:
         print(
-            f"minute_rows={summary.minute_rows} "
-            f"missing_minute_rows={summary.missing_minute_rows} "
-            f"flagged_minute_rows={summary.flagged_minute_rows}"
+            f"aggregate_rows={summary.aggregate_rows} "
+            f"missing_aggregate_rows={summary.missing_aggregate_rows} "
+            f"flagged_aggregate_rows={summary.flagged_aggregate_rows}"
         )
     for warning in summary.warnings:
         print(f"warning: {warning}", file=sys.stderr)

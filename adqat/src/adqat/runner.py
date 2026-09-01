@@ -9,9 +9,9 @@ from pathlib import Path
 import polars as pl
 import pyarrow as pa
 
+from adqat.aggregate import aggregate_fixed_period
 from adqat.compile import QCFlagContext, compile_findings
 from adqat.config import LoadedConfig, ResolvedConfig, load_config
-from adqat.minute import aggregate_one_minute
 from adqat.periods import Period, iter_periods
 from adqat.pointblank import EngineResult, run_pointblank
 from adqat.source import select_period, validate_source
@@ -29,9 +29,9 @@ class RunSummary:
     empty_periods: int = 0
     findings: int = 0
     flagged_observations: int = 0
-    minute_rows: int = 0
-    missing_minute_rows: int = 0
-    flagged_minute_rows: int = 0
+    aggregate_rows: int = 0
+    missing_aggregate_rows: int = 0
+    flagged_aggregate_rows: int = 0
     warnings: list[str] = field(default_factory=list)
 
 
@@ -118,23 +118,21 @@ def _run_period(
         summary.empty_periods += 1
         summary.warnings.append(f"period {period.id} contained no matching observations")
     result = _run_pipeline(selected.data, selected.key_schema, config, store.run_id)
-    minute_data = (
-        aggregate_one_minute(selected.data, result, config, period, store.run_id)
-        if config.run.processing.aggregation == "1minute"
+    aggregate_data = (
+        aggregate_fixed_period(selected.data, result, config, period, store.run_id)
+        if config.run.processing.aggregation is not None
         else None
     )
     _, flagged_observations = store.persist_period(
-        period, selected, result, config, minute_data=minute_data
+        period, selected, result, config, aggregate_data=aggregate_data
     )
     summary.processed_periods += 1
     summary.findings += result.findings.height
     summary.flagged_observations += flagged_observations
-    if minute_data is not None:
-        summary.minute_rows += minute_data.height
-        summary.missing_minute_rows += minute_data.filter(
-            pl.col("total_count") == 0
-        ).height
-        summary.flagged_minute_rows += minute_data.filter(pl.col("qc_bits") != 0).height
+    if aggregate_data is not None:
+        summary.aggregate_rows += aggregate_data.height
+        summary.missing_aggregate_rows += aggregate_data.filter(pl.col("total_count") == 0).height
+        summary.flagged_aggregate_rows += aggregate_data.filter(pl.col("qc_bits") != 0).height
 
 
 def _run_pipeline(

@@ -39,13 +39,27 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--kind", choices=("wxt", "aqt", "all"), default="all")
     parser.add_argument("--campaign-id", default="minute-full-v1")
     parser.add_argument("--max-parallel", type=int, default=4)
+    parser.add_argument("--aggregation-period", type=int, default=1)
+    parser.add_argument(
+        "--aggregation-units",
+        choices=("seconds", "minutes", "hours"),
+        default="minutes",
+    )
     parser.add_argument("--adqat", default="adqat", help="path to the adqat executable")
     parser.add_argument("--execute", action="store_true")
-    parser.add_argument(
-        "--inventory-dir", type=Path, default=root / "wxt-aqt-production-v5-report"
-    )
+    parser.add_argument("--inventory-dir", type=Path, default=root / "wxt-aqt-production-v5-report")
     parser.add_argument(
         "--rules", type=Path, default=root / "examples/quality_rules.crocus_wxt_aqt_pilot.yaml"
+    )
+    parser.add_argument(
+        "--aggregate-rules",
+        type=Path,
+        default=root / "examples/aggregate_quality_rules.crocus_wxt_aqt_minute_pilot.yaml",
+    )
+    parser.add_argument(
+        "--netcdf-site-map",
+        type=Path,
+        help="optional CSV with vsn,site columns; enables aggregate NetCDF",
     )
     return parser
 
@@ -54,9 +68,17 @@ def main(argv: list[str] | None = None) -> int:
     arguments = build_parser().parse_args(argv)
     if arguments.max_parallel < 1:
         raise SystemExit("--max-parallel must be at least 1")
+    if arguments.aggregation_period < 1:
+        raise SystemExit("--aggregation-period must be at least 1")
     dataset_root = arguments.dataset_root.expanduser().resolve()
     output_root = arguments.output_root.expanduser().resolve()
     rules_path = arguments.rules.expanduser().resolve()
+    aggregate_rules_path = arguments.aggregate_rules.expanduser().resolve()
+    site_map = (
+        _read_site_map(arguments.netcdf_site_map.expanduser().resolve())
+        if arguments.netcdf_site_map is not None
+        else {}
+    )
     if _overlap(dataset_root, output_root):
         raise SystemExit("output root must not overlap the read-only dataset root")
     campaign_root = output_root / "campaigns" / arguments.campaign_id
@@ -78,8 +100,12 @@ def main(argv: list[str] | None = None) -> int:
                 dataset_root,
                 output_root,
                 rules_path,
+                aggregate_rules_path,
                 config_root,
                 arguments.campaign_id,
+                site_map,
+                arguments.aggregation_period,
+                arguments.aggregation_units,
             )
             jobs.append(job)
     manifest = {
@@ -87,6 +113,16 @@ def main(argv: list[str] | None = None) -> int:
         "dataset_root": str(dataset_root),
         "output_root": str(output_root),
         "rules": str(rules_path),
+        "aggregate_rules": str(aggregate_rules_path),
+        "netcdf_site_map": (
+            str(arguments.netcdf_site_map.expanduser().resolve())
+            if arguments.netcdf_site_map is not None
+            else None
+        ),
+        "aggregation": {
+            "period": arguments.aggregation_period,
+            "units": arguments.aggregation_units,
+        },
         "jobs": jobs,
     }
     (campaign_root / "manifest.json").write_text(
@@ -131,6 +167,19 @@ def _read_inventory(path: Path) -> list[dict[str, str]]:
     return rows
 
 
+def _read_site_map(path: Path) -> dict[str, str]:
+    with path.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    if not rows or not {"vsn", "site"}.issubset(rows[0]):
+        raise ValueError(f"site map {path} is empty or lacks vsn,site columns")
+    result: dict[str, str] = {}
+    for row in rows:
+        if row["vsn"] in result:
+            raise ValueError(f"site map {path} repeats VSN {row['vsn']}")
+        result[row["vsn"]] = row["site"]
+    return result
+
+
 def _write_job(
     kind: str,
     definition: dict[str, str],
@@ -138,8 +187,12 @@ def _write_job(
     dataset_root: Path,
     output_root: Path,
     rules_path: Path,
+    aggregate_rules_path: Path,
     config_root: Path,
     campaign_id: str,
+    site_map: dict[str, str],
+    aggregation_period: int,
+    aggregation_units: str,
 ) -> dict[str, str]:
     vsn = row["vsn"]
     model = definition["model"]
@@ -156,6 +209,19 @@ def _write_job(
         / "date=*"
         / "part-*.parquet"
     )
+    output: dict[str, Any] = {"root": str(output_root)}
+    if site_map:
+        try:
+            site = site_map[vsn]
+        except KeyError as error:
+            raise ValueError(f"NetCDF site map has no entry for VSN {vsn}") from error
+        output["netcdf"] = {
+            "enabled": True,
+            "product": "aggregate",
+            "site": site,
+            "instrument": model,
+            "data_level": "b1",
+        }
     document: dict[str, Any] = {
         "schema_version": 1,
         "source": {
@@ -165,12 +231,22 @@ def _write_job(
             "time": {"column": "time", "timezone": "UTC"},
             "observation_keys": ["time", "series_id"],
         },
-        "quality": {"rules": str(rules_path), "pipeline": "basic_qc"},
+        "quality": {
+            "rules": str(rules_path),
+            "aggregate_rules": str(aggregate_rules_path),
+            "pipeline": "basic_qc",
+        },
         "selection": {
             "start": f"{start.isoformat()}T00:00:00Z",
             "end": f"{end.isoformat()}T00:00:00Z",
         },
-        "processing": {"period": "1d", "aggregation": "1minute"},
+        "processing": {
+            "period": "1d",
+            "aggregation": {
+                "period": aggregation_period,
+                "units": aggregation_units,
+            },
+        },
         "work_units": [
             {
                 "id": work_unit,
@@ -182,7 +258,7 @@ def _write_job(
                 },
             }
         ],
-        "output": {"root": str(output_root)},
+        "output": output,
     }
     config_path = config_root / f"{model}-{vsn}.yaml"
     config_path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")

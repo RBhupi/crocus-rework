@@ -1,0 +1,121 @@
+# CROCUS PILOT AGGREGATE RULES -- NOT SCIENTIFICALLY APPROVED.
+#
+# This file controls only the dense one-minute product. Raw-row failures are
+# evidence used to exclude inputs; their raw bit numbers are never copied here.
+# Instrument ranges are transcribed from the cited manufacturer datasheets.
+# AQT gas limits are converted from datasheet ppb to the source/product ppm units.
+# Physical ranges are current engineering candidates and must be replaced with
+# the literature ranges approved by the science team before production release.
+schema_version: 1
+
+metadata:
+  status: pilot
+  description: >-
+    Independent eight-bit one-minute QC for the CROCUS WXT536 and AQT530
+    products. Bit 7 is reserved and must always remain zero. Variability and
+    stuck thresholds are intentionally disabled until scientifically reviewed.
+  references:
+    wxt530_datasheet: docs/instrument_manuals/WXT530-Datasheet-B211500EN-K.pdf
+    wxt530_document_id: Vaisala B211500EN-K, published 2022
+    aqt530_datasheet: docs/instrument_manuals/AQT530-Datasheet-B211817EN-F.pdf
+    aqt530_document_id: Vaisala B211817EN-F, published 2023
+    physical_range_status: Engineering candidates pending literature review
+
+flags:
+  insufficient_coverage: {bit: 0, description: Insufficient valid source observations or no valid aggregate.}
+  excessive_variability: {bit: 1, description: Excessive within-minute variability.}
+  stuck_value: {bit: 2, description: Stuck or effectively constant within-minute value.}
+  below_physical_minimum: {bit: 3, description: Aggregate is below the physical minimum.}
+  above_physical_maximum: {bit: 4, description: Aggregate is above the physical maximum.}
+  below_instrument_minimum: {bit: 5, description: Aggregate is below the instrument minimum.}
+  above_instrument_maximum: {bit: 6, description: Aggregate is above the instrument maximum.}
+  reserved: {bit: 7, description: Reserved for future use and always zero.}
+
+profiles:
+  crocus_wxt536_pilot:
+    variables:
+      air_temperature:
+        coverage: {minimum_valid_count: 1}
+        physical_range: {left: -90, right: 70}
+        instrument_range: {left: -52, right: 60}
+      relative_humidity:
+        coverage: {minimum_valid_count: 1}
+        physical_range: {left: 0, right: 100}
+        instrument_range: {left: 0, right: 100}
+      air_pressure:
+        coverage: {minimum_valid_count: 1}
+        physical_range: {left: 300, right: 1200}
+        instrument_range: {left: 500, right: 1100}
+      wind_speed:
+        coverage: {minimum_valid_count: 1}
+        physical_range: {left: 0, right: 150}
+        instrument_range: {left: 0, right: 60}
+      wind_direction:
+        coverage: {minimum_valid_count: 1}
+        physical_range: {left: 0, right: 360}
+        instrument_range: {left: 0, right: 360}
+      rain_accumulation:
+        coverage: {minimum_valid_count: 1}
+        physical_range: {left: 0, right: 65535}
+      hail_accumulation:
+        coverage: {minimum_valid_count: 1}
+        physical_range: {left: 0, right: 65535}
+      heater_temperature:
+        coverage: {minimum_valid_count: 1}
+        physical_range: {left: -80, right: 100}
+      heater_voltage:
+        coverage: {minimum_valid_count: 1}
+        physical_range: {left: 0, right: 31.2}
+        instrument_range: {left: 10.8, right: 31.2}
+      heater_status:
+        coverage: {minimum_valid_count: 1}
+      supply_voltage:
+        coverage: {minimum_valid_count: 1}
+        physical_range: {left: 0, right: 31.2}
+        instrument_range: {left: 5.4, right: 31.2}
+
+  crocus_aqt530_pilot:
+    variables:
+      air_temperature:
+        coverage: {minimum_valid_count: 1}
+        physical_range: {left: -90, right: 70}
+        instrument_range: {left: -30, right: 40}
+      relative_humidity:
+        coverage: {minimum_valid_count: 1}
+        physical_range: {left: 0, right: 100}
+        instrument_range: {left: 15, right: 100}
+      air_pressure:
+        coverage: {minimum_valid_count: 1}
+        physical_range: {left: 300, right: 1200}
+        instrument_range: {left: 800, right: 1150}
+      carbon_monoxide:
+        coverage: {minimum_valid_count: 1}
+        physical_range: {left: 0, right: 1000}
+        instrument_range: {left: 0, right: 10}
+      nitric_oxide:
+        coverage: {minimum_valid_count: 1}
+        physical_range: {left: 0, right: 100}
+        instrument_range: {left: 0, right: 2}
+      nitrogen_dioxide:
+        coverage: {minimum_valid_count: 1}
+        physical_range: {left: 0, right: 100}
+        instrument_range: {left: 0, right: 2}
+      ozone:
+        coverage: {minimum_valid_count: 1}
+        physical_range: {left: 0, right: 100}
+        instrument_range: {left: 0, right: 2}
+      instrument_datetime:
+        coverage: {minimum_valid_count: 1}
+      instrument_uptime:
+        coverage: {minimum_valid_count: 1}
+      particulate_matter_pm1:
+        coverage: {minimum_valid_count: 1}
+        physical_range: {left: 0, right: 2500}
+      particulate_matter_pm2_5:
+        coverage: {minimum_valid_count: 1}
+        physical_range: {left: 0, right: 100000}
+        instrument_range: {left: 0, right: 1000}
+      particulate_matter_pm10:
+        coverage: {minimum_valid_count: 1}
+        physical_range: {left: 0, right: 100000}
+        instrument_range: {left: 0, right: 2500}

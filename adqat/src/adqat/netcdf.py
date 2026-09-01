@@ -16,10 +16,30 @@ from adqat.config import ResolvedConfig
 from adqat.periods import Period
 
 CROCUS_LEVEL_STATEMENT = (
-    "CROCUS ARM-inspired naming and processing levels; "
-    "not an ARM datastream level designation."
+    "CROCUS ARM-inspired naming and processing levels; not an ARM datastream level designation."
 )
 FLAG_NAME = re.compile(r"^[A-Za-z0-9_]+$")
+NETCDF_VARIABLE_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
+AGGREGATE_FLAG_MEANINGS = (
+    "insufficient_coverage",
+    "excessive_variability",
+    "stuck_value",
+    "below_physical_minimum",
+    "above_physical_maximum",
+    "below_instrument_minimum",
+    "above_instrument_maximum",
+    "reserved",
+)
+AGGREGATE_FLAG_ASSESSMENTS = (
+    "Bad",
+    "Indeterminate",
+    "Indeterminate",
+    "Bad",
+    "Bad",
+    "Bad",
+    "Bad",
+    "Indeterminate",
+)
 
 
 class NetCDFError(RuntimeError):
@@ -35,6 +55,336 @@ def native_a1_filename(config: ResolvedConfig, period: Period) -> str:
     start = period.start.strftime("%Y%m%dT%H%M%SZ")
     end = period.end.strftime("%Y%m%dT%H%M%SZ")
     return f"{netcdf.site}.{netcdf.instrument}.{vsn}.native.a1.{start}-{end}.nc"
+
+
+def aggregate_b1_filename(config: ResolvedConfig, period: Period) -> str:
+    netcdf = config.run.output.netcdf
+    if netcdf is None or netcdf.product != "aggregate":
+        raise NetCDFError("aggregate NetCDF output is not configured")
+    _validate_daily_period(period)
+    vsn = str(config.work_unit.filters["vsn"])
+    start = period.start.strftime("%Y%m%dT%H%M%SZ")
+    end = period.end.strftime("%Y%m%dT%H%M%SZ")
+    integration = config.run.processing.aggregation_label
+    if integration is None:  # pragma: no cover
+        raise NetCDFError("aggregation duration is unavailable")
+    return (
+        f"{netcdf.site}.{netcdf.instrument}.{vsn}.{integration}.{netcdf.data_level}."
+        f"{start}-{end}.nc"
+    )
+
+
+def write_aggregate_b1(
+    aggregate_data: pl.DataFrame,
+    destination: Path,
+    period: Period,
+    config: ResolvedConfig,
+    run_id: str,
+    input_fingerprint: str,
+    source_file_count: int,
+) -> Path:
+    """Write a dense, wide, ARM-style fixed-period product with uint8 QC variables."""
+    expected_name = aggregate_b1_filename(config, period)
+    if destination.name != expected_name:
+        raise NetCDFError(f"NetCDF destination must be named {expected_name!r}")
+    interval_seconds = config.run.processing.aggregation_seconds
+    if interval_seconds is None:  # pragma: no cover
+        raise NetCDFError("aggregation duration is unavailable")
+    expected_intervals = int((period.end - period.start).total_seconds() // interval_seconds)
+    try:
+        with netCDF4.Dataset(destination, "w", format="NETCDF4") as dataset:
+            dataset.createDimension("time", expected_intervals)
+            _write_aggregate_global_attributes(
+                dataset,
+                config,
+                period,
+                run_id,
+                input_fingerprint,
+                source_file_count,
+            )
+            _write_aggregate_time(dataset, period, expected_intervals, interval_seconds)
+            _write_aggregate_variables(dataset, aggregate_data, config, expected_intervals)
+    except Exception as error:
+        destination.unlink(missing_ok=True)
+        raise NetCDFError(f"failed to write {destination.name}: {error}") from error
+    _verify_aggregate_b1(destination, period, config, expected_intervals)
+    return destination
+
+
+def _write_aggregate_global_attributes(
+    dataset: Any,
+    config: ResolvedConfig,
+    period: Period,
+    run_id: str,
+    input_fingerprint: str,
+    source_file_count: int,
+) -> None:
+    netcdf = config.run.output.netcdf
+    aggregate_rules = config.aggregate_rules
+    aggregation = config.run.processing.aggregation
+    aggregation_seconds = config.run.processing.aggregation_seconds
+    if (
+        netcdf is None
+        or aggregate_rules is None
+        or aggregation is None
+        or aggregation_seconds is None
+    ):  # pragma: no cover
+        raise NetCDFError("NetCDF output is not configured")
+    created = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    dataset.setncatts(
+        {
+            "title": f"CROCUS {netcdf.instrument.upper()} fixed-period QA/QC product",
+            "summary": (
+                "Fixed-period aggregates computed only from raw observations that pass "
+                "direct-value ADQAT checks, with paired unsigned eight-bit QC masks."
+            ),
+            "Conventions": "CF-1.10, ACDD-1.3",
+            "crocus_level_statement": CROCUS_LEVEL_STATEMENT,
+            "crocus_filename_convention": (
+                "{site}.{instrument}.{vsn}.{integration}.{level}.{start_utc}-{end_utc}.nc"
+            ),
+            "crocus_processing_level": "2",
+            "crocus_data_level": netcdf.data_level,
+            "crocus_medallion": "gold",
+            "source_dataset_fingerprint": input_fingerprint,
+            "source_snapshot": config.source_path,
+            "source_file_count": np.int64(source_file_count),
+            "qaqc_rule_fingerprint": config.config_hash,
+            "aggregation_rule_fingerprint": config.config_hash,
+            "aggregation_period": np.int32(aggregation.period),
+            "aggregation_period_units": aggregation.units,
+            "aggregation_period_seconds": np.int32(aggregation_seconds),
+            "aggregate_qc_rule_status": aggregate_rules.metadata.status,
+            "processing_software_version": __version__,
+            "site_id": netcdf.site,
+            "vsn": str(config.work_unit.filters["vsn"]),
+            "instrument_id": str(config.work_unit.filters["instrument_id"]),
+            "instrument_model": str(config.work_unit.filters["sensor"]),
+            "run_id": run_id,
+            "work_unit_id": config.work_unit.id,
+            "nominal_period_start": _format_datetime(period.start),
+            "nominal_period_end": _format_datetime(period.end),
+            "time_coverage_start": _format_datetime(period.start),
+            "time_coverage_end": _format_datetime(period.end),
+            "time_coverage_duration": "P1D",
+            "time_coverage_resolution": f"PT{aggregation_seconds}S",
+            "date_created": created,
+            "history": f"{created} generated by ADQAT {__version__}",
+        }
+    )
+
+
+def _write_aggregate_time(
+    dataset: Any, period: Period, expected_intervals: int, interval_seconds: int
+) -> None:
+    start_seconds = int(period.start.timestamp())
+    values = start_seconds + np.arange(expected_intervals, dtype=np.int64) * interval_seconds
+    time = dataset.createVariable("time", "i8", ("time",), zlib=True, complevel=4)
+    time.long_name = "start of fixed aggregation interval"
+    time.standard_name = "time"
+    time.units = "seconds since 1970-01-01 00:00:00 UTC"
+    time.calendar = "proleptic_gregorian"
+    time.bounds = "time_bounds"
+    time[:] = values
+    dataset.createDimension("bounds", 2)
+    bounds = dataset.createVariable("time_bounds", "i8", ("time", "bounds"))
+    bounds.units = time.units
+    bounds.calendar = time.calendar
+    bounds[:, 0] = values
+    bounds[:, 1] = values + interval_seconds
+
+
+def _write_aggregate_variables(
+    dataset: Any,
+    frame: pl.DataFrame,
+    config: ResolvedConfig,
+    expected_intervals: int,
+) -> None:
+    netcdf = config.run.output.netcdf
+    aggregate_rules = config.aggregate_rules
+    if netcdf is None or aggregate_rules is None:  # pragma: no cover
+        raise NetCDFError("aggregate NetCDF rules are unavailable")
+    flag_items = sorted(aggregate_rules.flags.items(), key=lambda item: item[1].bit)
+    if tuple(name for name, _ in flag_items) != AGGREGATE_FLAG_MEANINGS:
+        raise NetCDFError("aggregate flag layout does not match the fixed eight-bit contract")
+    masks = np.asarray([1 << bit for bit in range(8)], dtype=np.uint8)
+    for name, definition in config.profile.variables.items():
+        if not NETCDF_VARIABLE_NAME.fullmatch(name):
+            raise NetCDFError(f"profile variable {name!r} is not a safe NetCDF name")
+        rows = frame.filter(pl.col("variable") == name).sort("time")
+        if rows.height != expected_intervals:
+            raise NetCDFError(
+                f"variable {name!r} has {rows.height} aggregate rows; expected {expected_intervals}"
+            )
+        qc_name = f"qc_{name}"
+        if definition.data_type == "numeric":
+            values = np.asarray(
+                [
+                    netcdf.fill_value if value is None else float(value)
+                    for value in rows.get_column("value_float64")
+                ],
+                dtype=np.float64,
+            )
+            variable = dataset.createVariable(
+                name,
+                "f8",
+                ("time",),
+                fill_value=np.float64(netcdf.fill_value),
+                zlib=True,
+                complevel=4,
+            )
+            variable.missing_value = np.float64(netcdf.fill_value)
+            variable[:] = values
+        else:
+            values = np.asarray(
+                ["" if value is None else str(value) for value in rows.get_column("value_string")],
+                dtype=object,
+            )
+            variable = dataset.createVariable(name, str, ("time",))
+            variable.missing_value = ""
+            variable[:] = values
+        variable.long_name = f"aggregated {name.replace('_', ' ')}"
+        variable.units = definition.units or "1"
+        variable.coordinates = "time"
+        variable.cell_methods = (
+            "time: mean"
+            if definition.aggregation == "mean"
+            else (f"time: {definition.aggregation}")
+        )
+        variable.ancillary_variables = qc_name
+
+        qc = dataset.createVariable(qc_name, "u1", ("time",), zlib=True, complevel=4)
+        qc.long_name = f"quality check results for {name}"
+        qc.units = "1"
+        qc.coordinates = "time"
+        qc.flag_masks = masks
+        qc.flag_meanings = " ".join(AGGREGATE_FLAG_MEANINGS)
+        qc.valid_range = np.asarray([0, 127], dtype=np.uint8)
+        for index, ((_, flag), assessment) in enumerate(
+            zip(flag_items, AGGREGATE_FLAG_ASSESSMENTS, strict=True), start=1
+        ):
+            qc.setncattr(f"qc_bit_{index}_description", flag.description)
+            qc.setncattr(f"qc_bit_{index}_assessment", assessment)
+        qc[:] = rows.get_column("qc_bits").to_numpy().astype(np.uint8, copy=False)
+        _write_aggregate_diagnostics(
+            dataset,
+            name,
+            rows,
+            definition.data_type,
+            definition.units or "1",
+            netcdf.fill_value,
+        )
+
+
+def _write_aggregate_diagnostics(
+    dataset: Any,
+    name: str,
+    rows: pl.DataFrame,
+    data_type: str,
+    units: str,
+    fill_value: float,
+) -> None:
+    for column, suffix, dtype in (
+        ("total_count", "total_count", "u4"),
+        ("valid_count", "valid_count", "u4"),
+        ("invalid_count", "invalid_count", "u4"),
+    ):
+        variable = dataset.createVariable(
+            f"{name}_{suffix}", dtype, ("time",), zlib=True, complevel=4
+        )
+        variable.long_name = f"{suffix.replace('_', ' ')} for {name}"
+        variable.units = "1"
+        variable[:] = rows.get_column(column).to_numpy().astype(np.uint32, copy=False)
+    valid_fraction = dataset.createVariable(
+        f"{name}_valid_fraction",
+        "f4",
+        ("time",),
+        fill_value=np.float32(fill_value),
+        zlib=True,
+        complevel=4,
+    )
+    valid_fraction.long_name = f"fraction of raw observations valid for {name}"
+    valid_fraction.units = "1"
+    valid_fraction.valid_range = np.asarray([0.0, 1.0], dtype=np.float32)
+    valid_fraction[:] = np.asarray(
+        [fill_value if value is None else value for value in rows.get_column("valid_fraction")],
+        dtype=np.float32,
+    )
+    for column, suffix, diagnostic_units in (
+        ("observed_rate_hz", "observed_rate", "Hz"),
+        ("maximum_gap_seconds", "maximum_gap", "s"),
+    ):
+        diagnostic = dataset.createVariable(
+            f"{name}_{suffix}",
+            "f8",
+            ("time",),
+            fill_value=np.float64(fill_value),
+            zlib=True,
+            complevel=4,
+        )
+        diagnostic.long_name = f"{suffix.replace('_', ' ')} diagnostic for {name}"
+        diagnostic.units = diagnostic_units
+        diagnostic[:] = np.asarray(
+            [fill_value if value is None else value for value in rows.get_column(column)],
+            dtype=np.float64,
+        )
+    if data_type != "numeric":
+        return
+    for column, suffix in (
+        ("mean", "mean"),
+        ("standard_deviation", "std"),
+        ("minimum", "min"),
+        ("maximum", "max"),
+        ("median", "median"),
+        ("iqr", "iqr"),
+    ):
+        diagnostic = dataset.createVariable(
+            f"{name}_{suffix}",
+            "f8",
+            ("time",),
+            fill_value=np.float64(fill_value),
+            zlib=True,
+            complevel=4,
+        )
+        diagnostic.long_name = f"aggregation-period {suffix} diagnostic for {name}"
+        diagnostic.units = units
+        diagnostic[:] = np.asarray(
+            [fill_value if value is None else value for value in rows.get_column(column)],
+            dtype=np.float64,
+        )
+
+
+def _verify_aggregate_b1(
+    path: Path,
+    period: Period,
+    config: ResolvedConfig,
+    expected_intervals: int,
+) -> None:
+    try:
+        with netCDF4.Dataset(path, "r") as dataset:
+            if len(dataset.dimensions["time"]) != expected_intervals:
+                raise NetCDFError("aggregate NetCDF time dimension is incomplete")
+            dataset.set_auto_mask(False)
+            for name, definition in config.profile.variables.items():
+                qc = np.asarray(dataset.variables[f"qc_{name}"][:], dtype=np.uint8)
+                if dataset.variables[f"qc_{name}"].dtype != np.dtype("uint8"):
+                    raise NetCDFError(f"qc_{name} is not an unsigned eight-bit variable")
+                if np.any(qc >= 128):
+                    raise NetCDFError(f"qc_{name} sets reserved bit 7")
+                if definition.data_type == "numeric":
+                    values = np.asarray(dataset.variables[name][:], dtype=np.float64)
+                    fill = float(dataset.variables[name]._FillValue)
+                    if np.any((values == fill) & ((qc & 1) == 0)):
+                        raise NetCDFError(
+                            f"{name} contains fill values without insufficient-coverage bit"
+                        )
+            first = int(dataset.variables["time"][0])
+            if first != int(period.start.timestamp()):
+                raise NetCDFError("aggregate NetCDF time coordinate does not start at period start")
+    except NetCDFError:
+        raise
+    except Exception as error:
+        raise NetCDFError(f"failed to verify {path.name}: {error}") from error
 
 
 def write_native_a1(
@@ -111,8 +461,7 @@ def _write_global_attributes(
         "Conventions": "CF-1.10, ACDD-1.3",
         "crocus_level_statement": CROCUS_LEVEL_STATEMENT,
         "crocus_filename_convention": (
-            "{site}.{instrument}.{vsn}.{integration}.{level}."
-            "{start_utc}-{end_utc}.nc"
+            "{site}.{instrument}.{vsn}.{integration}.{level}.{start_utc}-{end_utc}.nc"
         ),
         "crocus_processing_level": "1",
         "crocus_data_level": "a1",
