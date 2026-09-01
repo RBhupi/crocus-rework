@@ -1,6 +1,6 @@
 # CROCUS rework handover
 
-Last updated: 2026-08-24
+Last updated: 2026-08-27
 
 ## Purpose
 
@@ -13,6 +13,12 @@ The repository implements selective, streaming conversion of an InfluxDB OSS
 backup into a long-format Parquet dataset. The exhaustive inventory is no
 longer required for extraction, although its completed SQLite catalog remains
 useful for discovering and reviewing instruments and variables.
+
+The WXT+AQT production extraction is complete: 957 of 957 days, 23 variables,
+37 instruments, 55,038,045,135 fact rows, zero errors, zero quarantined rows,
+and zero metadata conflicts. See
+[`extracted_dataset_report.md`](extracted_dataset_report.md) for the concise
+dataset contents and completion report.
 
 ## Repository state
 
@@ -591,19 +597,17 @@ sensor/VSN/instrument/day partition.
 
 ## Next steps after production completion
 
-1. Run the completion checks above.
-2. Save a compact validation summary containing counts, timestamps, checksums,
-   sensor purity, quarantine, conflicts, runtime, and peak memory.
-3. Review any quarantine or metadata conflicts before declaring the dataset
-   production-ready.
-4. Perform representative WXT and AQT Hive queries by sensor, VSN, instrument,
-   date, measurement, and field.
-5. Measure query performance and identify only genuinely small daily
-   partitions for optional within-partition compaction.
-6. Preserve the raw backup, selection JSON, dataset manifest, final export
-   manifest, catalog, and validation summary together.
-7. Add another instrument only after curating its exact measurements and sensor
-   identity from the completed inventory or a representative shard index.
+The extraction and finalization checks are complete. Dataset contents,
+variable ranges, and per-VSN coverage are recorded in
+[`extracted_dataset_report.md`](extracted_dataset_report.md).
+
+The next session should decide whether Parquet compaction improves repeated
+analysis. Do not concatenate the production dataset in place. First inventory
+file counts and sizes, benchmark representative filtered queries against the
+current Hive dataset, create a compacted copy of a representative subset, and
+compare elapsed time, bytes read, pruning, and storage size. Preserve
+`sensor`, `vsn`, `instrument`, and date pruning. Adopt compaction only when the
+benchmark shows a material improvement; never create one global Parquet file.
 
 The approved Bronze/Silver/Gold level definitions, NetCDF codes, daily filename
 pattern, and time-coverage rules are defined in
@@ -612,11 +616,12 @@ pattern, and time-coverage rules are defined in
 ## Suggested prompt for a new session
 
 ```text
-Continue the CROCUS WXT+AQT production workflow using docs/HANDOVER.md as the
-authoritative handover. First inspect the active/final HPC run without changing
-or deleting any output. Re-establish the documented HPC paths, check whether
-the orchestrator on compute-386-07 is still running, count completed shard/day
-markers, inspect errors, and validate the final export manifest if it exists.
-Use the existing immutable output root and do not launch a second orchestrator
-against it. Proceed through the documented completion and reconciliation checks.
+Use docs/HANDOVER.md and docs/extracted_dataset_report.md as the authoritative
+CROCUS handover. The WXT+AQT Level 0 extraction is complete and immutable.
+Design and run a read-only Parquet performance assessment for repeated filtered
+analysis. Inventory current file and row-group sizes; benchmark representative
+DuckDB, PyArrow, or Polars queries by sensor, VSN, instrument, measurement, and
+date; then compact only a copied representative subset and repeat the same
+benchmarks. Recommend whether and at what partition boundary to compact. Do not
+modify the production dataset and do not concatenate everything into one file.
 ```
