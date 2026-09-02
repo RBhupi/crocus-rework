@@ -1,0 +1,466 @@
+# CROCUS WXT536/AQT530 aggregate QC standard.
+#
+# Approval applies to the flag semantics, variable applicability, manufacturer
+# ranges, negative-impossible policy, and instrument operating-condition limits.
+# Numeric thresholds for coverage, standard deviation, spike, and persistence
+# are intentionally not invented here. Those checks must remain disabled until
+# reviewed values are added in a new immutable standard version.
+schema_version: 1
+kind: crocus_aggregate_qc_standard
+id: crocus-wxt536-aqt530-aggregate-qc
+version: 1.0.0
+status: approved
+
+approval:
+  approved_date: 2026-09-01
+  scope:
+    - variable_qc_flag_layout
+    - variable_check_applicability
+    - manufacturer_measurement_ranges
+    - negative_impossible_policy
+    - instrument_condition_flag_layout
+    - instrument_operating_condition_limits
+  pending_parameters:
+    - raw_insufficient_coverage_thresholds
+    - raw_high_stdev_thresholds
+    - raw_low_stdev_thresholds
+    - aggregate_spike_thresholds
+    - aggregate_stuck_tolerances_and_persistence
+    - wxt_heater_status_active_value_mapping
+    - instrument_status_error_value_mapping
+  activation_policy: >-
+    A check requiring a pending numeric or categorical parameter is disabled.
+    It may be enabled only in a new version after the parameter is explicitly
+    configured and reviewed. No threshold may be inferred from observed data.
+
+runtime_compatibility:
+  current_adqat_version: 0.1.4
+  accepted_by_current_runtime: false
+  reason: >-
+    ADQAT 0.1.4 still validates and calculates the superseded aggregate bit
+    layout. Passing this standard to that runtime would be rejected rather than
+    silently producing incorrectly labeled QC.
+  required_runtime_work:
+    - implement_the_variable_qc_flag_contract_below
+    - implement_separate_instrument_condition_flag
+    - preserve_disabled_state_for_unapproved_threshold_checks
+
+processing_contract:
+  input: native CROCUS long-format Parquet facts
+  raw_observations:
+    preserve_timestamps: true
+    preserve_values: true
+    resample: false
+    interpolate: false
+    synthesize_missing_rows: false
+    valid_input_requires_zero_raw_qc: true
+  aggregation:
+    duration_source: processing_run.processing.aggregation
+    allowed_units: [seconds, minutes, hours]
+    dense_time_grid: true
+    missing_numeric_fill_value: -999.0
+  variable_qc:
+    name_template: qc_{variable}
+    dtype: uint8
+    zero_means_no_configured_failure: true
+    classifications_assigned: false
+  instrument_condition_qc:
+    name: instrument_condition_flag
+    dtype: uint8
+    describes_measurement_validity: false
+
+references:
+  aqt530:
+    path: docs/instrument_manuals/AQT530-Datasheet-B211817EN-F.pdf
+    document_id: Vaisala B211817EN-F
+    published: 2023
+    concentration_units_note: >-
+      Manufacturer gas limits are converted from ppb to the CROCUS ppm source
+      and product representation: 2000 ppb equals 2 ppm and 10000 ppb equals
+      10 ppm.
+  wxt530:
+    path: docs/instrument_manuals/WXT530-Datasheet-B211500EN-K.pdf
+    document_id: Vaisala B211500EN-K
+    published: 2022
+
+variable_qc_flags:
+  raw_insufficient_coverage:
+    bit: 0
+    value: 1
+    meaning: Too few valid native observations represent the aggregation period.
+    operates_on: observations_within_aggregation_period
+  raw_high_stdev:
+    bit: 1
+    value: 2
+    meaning: Native observations have unusually high within-period standard deviation.
+    operates_on: observations_within_aggregation_period
+  raw_low_stdev:
+    bit: 2
+    value: 4
+    meaning: Native observations have unusually low within-period standard deviation.
+    operates_on: observations_within_aggregation_period
+  aggregate_spike:
+    bit: 3
+    value: 8
+    meaning: >-
+      The aggregate differs strongly from both neighboring aggregates while the
+      neighboring aggregates are mutually consistent.
+    operates_on: consecutive_aggregates
+  aggregate_stuck:
+    bit: 4
+    value: 16
+    meaning: >-
+      Consecutive aggregates remain identical or within tolerance longer than
+      the configured persistence period.
+    operates_on: consecutive_aggregates
+  instrument_range:
+    bit: 5
+    value: 32
+    meaning: Aggregate lies outside the documented manufacturer measurement range.
+    operates_on: aggregate_value
+    side_is_inferred_from_value_and_bounds: true
+  negative_impossible:
+    bit: 6
+    value: 64
+    meaning: Aggregate is negative for a variable that cannot physically be negative.
+    operates_on: aggregate_value
+  reserved:
+    bit: 7
+    value: 128
+    meaning: Reserved for a future variable-level condition.
+    always_zero: true
+
+instrument_condition_flags:
+  heater_active:
+    bit: 0
+    value: 1
+    meaning: Instrument heater was active during the aggregation period.
+  temp_below_operating:
+    bit: 1
+    value: 2
+    meaning: Ambient temperature was below the manufacturer operating range.
+  temp_above_operating:
+    bit: 2
+    value: 4
+    meaning: Ambient temperature was above the manufacturer operating range.
+  rh_below_operating:
+    bit: 3
+    value: 8
+    meaning: Ambient relative humidity was below the manufacturer operating range.
+  high_humidity:
+    bit: 4
+    value: 16
+    meaning: Humidity exceeded a documented degradation threshold.
+  pressure_below_operating:
+    bit: 5
+    value: 32
+    meaning: Ambient pressure was below the manufacturer operating range.
+  pressure_above_operating:
+    bit: 6
+    value: 64
+    meaning: Ambient pressure was above the manufacturer operating range.
+  instrument_status_error:
+    bit: 7
+    value: 128
+    meaning: Instrument status output reported a documented error or invalid state.
+
+profiles:
+  crocus_aqt530:
+    sensor: vaisala-aqt530
+    source_profile: crocus_aqt530_pilot
+    variables:
+      air_temperature:
+        measurement: aqt.env.temp
+        units: degree_Celsius
+        checks: &aqt_continuous_checks
+          raw_insufficient_coverage: {applicable: true, enabled: false}
+          raw_high_stdev: {applicable: true, enabled: false}
+          raw_low_stdev: {applicable: true, enabled: false}
+          aggregate_spike: {applicable: true, enabled: false}
+          aggregate_stuck: {applicable: true, enabled: false}
+          instrument_range:
+            applicable: true
+            enabled: true
+            minimum: -30
+            maximum: 40
+            inclusive: [true, true]
+          negative_impossible: {applicable: false, enabled: false}
+      relative_humidity:
+        measurement: aqt.env.humidity
+        units: percent
+        checks:
+          <<: *aqt_continuous_checks
+          instrument_range:
+            applicable: true
+            enabled: true
+            minimum: 15
+            maximum: 100
+            inclusive: [true, true]
+          negative_impossible: {applicable: true, enabled: true}
+      air_pressure:
+        measurement: aqt.env.pressure
+        units: hPa
+        checks:
+          <<: *aqt_continuous_checks
+          instrument_range:
+            applicable: true
+            enabled: true
+            minimum: 800
+            maximum: 1150
+            inclusive: [true, true]
+          negative_impossible: {applicable: false, enabled: false}
+      carbon_monoxide:
+        measurement: aqt.gas.co
+        units: ppm
+        checks:
+          <<: *aqt_continuous_checks
+          instrument_range:
+            applicable: true
+            enabled: true
+            minimum: 0
+            maximum: 10
+            inclusive: [true, true]
+          negative_impossible: {applicable: true, enabled: true}
+      nitric_oxide:
+        measurement: aqt.gas.no
+        units: ppm
+        checks: &aqt_two_ppm_checks
+          <<: *aqt_continuous_checks
+          instrument_range:
+            applicable: true
+            enabled: true
+            minimum: 0
+            maximum: 2
+            inclusive: [true, true]
+          negative_impossible: {applicable: true, enabled: true}
+      nitrogen_dioxide:
+        measurement: aqt.gas.no2
+        units: ppm
+        checks: *aqt_two_ppm_checks
+      ozone:
+        measurement: aqt.gas.ozone
+        units: ppm
+        checks: *aqt_two_ppm_checks
+      particulate_matter_pm1:
+        measurement: aqt.particle.pm1
+        units: ug m-3
+        checks:
+          <<: *aqt_continuous_checks
+          instrument_range: {applicable: false, enabled: false}
+          negative_impossible: {applicable: true, enabled: true}
+      particulate_matter_pm2_5:
+        measurement: aqt.particle.pm2.5
+        units: ug m-3
+        checks:
+          <<: *aqt_continuous_checks
+          instrument_range:
+            applicable: true
+            enabled: true
+            minimum: 0
+            maximum: 1000
+            inclusive: [true, true]
+          negative_impossible: {applicable: true, enabled: true}
+      particulate_matter_pm10:
+        measurement: aqt.particle.pm10
+        units: ug m-3
+        checks:
+          <<: *aqt_continuous_checks
+          instrument_range:
+            applicable: true
+            enabled: true
+            minimum: 0
+            maximum: 2500
+            inclusive: [true, true]
+          negative_impossible: {applicable: true, enabled: true}
+      instrument_datetime:
+        measurement: aqt.house.datetime
+        units: "1"
+        checks:
+          raw_insufficient_coverage: {applicable: false, enabled: false}
+          raw_high_stdev: {applicable: false, enabled: false}
+          raw_low_stdev: {applicable: false, enabled: false}
+          aggregate_spike: {applicable: false, enabled: false}
+          aggregate_stuck: {applicable: false, enabled: false}
+          instrument_range: {applicable: false, enabled: false}
+          negative_impossible: {applicable: false, enabled: false}
+      instrument_uptime:
+        measurement: aqt.house.uptime
+        units: s
+        checks:
+          raw_insufficient_coverage: {applicable: true, enabled: false}
+          raw_high_stdev: {applicable: false, enabled: false}
+          raw_low_stdev: {applicable: false, enabled: false}
+          aggregate_spike: {applicable: false, enabled: false}
+          aggregate_stuck: {applicable: false, enabled: false}
+          instrument_range: {applicable: false, enabled: false}
+          negative_impossible: {applicable: true, enabled: true}
+    instrument_conditions:
+      temperature:
+        variable: air_temperature
+        below: -30
+        above: 40
+        units: degree_Celsius
+      relative_humidity:
+        variable: relative_humidity
+        below: 15
+        high_humidity_above: 90
+        units: percent
+      pressure:
+        variable: air_pressure
+        below: 800
+        above: 1150
+        units: hPa
+      heater_active: {enabled: false, reason: not_applicable}
+      instrument_status_error:
+        enabled: false
+        reason: documented_source_status_mapping_not_configured
+
+  crocus_wxt536:
+    sensor: vaisala-wxt536
+    source_profile: crocus_wxt536_pilot
+    variables:
+      air_temperature:
+        measurement: wxt.env.temp
+        units: degree_Celsius
+        checks: &wxt_continuous_checks
+          raw_insufficient_coverage: {applicable: true, enabled: false}
+          raw_high_stdev: {applicable: true, enabled: false}
+          raw_low_stdev: {applicable: true, enabled: false}
+          aggregate_spike: {applicable: true, enabled: false}
+          aggregate_stuck: {applicable: true, enabled: false}
+          instrument_range:
+            applicable: true
+            enabled: true
+            minimum: -52
+            maximum: 60
+            inclusive: [true, true]
+          negative_impossible: {applicable: false, enabled: false}
+      relative_humidity:
+        measurement: wxt.env.humidity
+        units: percent
+        checks:
+          <<: *wxt_continuous_checks
+          instrument_range:
+            applicable: true
+            enabled: true
+            minimum: 0
+            maximum: 100
+            inclusive: [true, true]
+          negative_impossible: {applicable: true, enabled: true}
+      air_pressure:
+        measurement: wxt.env.pressure
+        units: hPa
+        checks:
+          <<: *wxt_continuous_checks
+          instrument_range:
+            applicable: true
+            enabled: true
+            minimum: 500
+            maximum: 1100
+            inclusive: [true, true]
+          negative_impossible: {applicable: false, enabled: false}
+      wind_speed:
+        measurement: wxt.wind.speed
+        units: m s-1
+        checks:
+          <<: *wxt_continuous_checks
+          instrument_range:
+            applicable: true
+            enabled: true
+            minimum: 0
+            maximum: 60
+            inclusive: [true, true]
+            reporting_maximum: 75
+          negative_impossible: {applicable: true, enabled: true}
+      wind_direction:
+        measurement: wxt.wind.direction
+        units: degree
+        checks:
+          <<: *wxt_continuous_checks
+          instrument_range:
+            applicable: true
+            enabled: true
+            minimum: 0
+            maximum: 360
+            inclusive: [true, true]
+          negative_impossible: {applicable: false, enabled: false}
+      rain_accumulation:
+        measurement: wxt.rain.accumulation
+        units: mm
+        checks: &wxt_accumulator_checks
+          <<: *wxt_continuous_checks
+          instrument_range: {applicable: false, enabled: false}
+          negative_impossible:
+            applicable: true
+            enabled: false
+            apply_to: reset_aware_interval_increment
+            reason: reset_aware_increment_not_implemented
+      hail_accumulation:
+        measurement: wxt.hail.accumulation
+        units: hits cm-2
+        checks: *wxt_accumulator_checks
+      heater_status:
+        measurement: wxt.heater.status
+        units: "1"
+        checks:
+          raw_insufficient_coverage: {applicable: false, enabled: false}
+          raw_high_stdev: {applicable: false, enabled: false}
+          raw_low_stdev: {applicable: false, enabled: false}
+          aggregate_spike: {applicable: false, enabled: false}
+          aggregate_stuck: {applicable: false, enabled: false}
+          instrument_range: {applicable: false, enabled: false, type: categorical}
+          negative_impossible: {applicable: false, enabled: false}
+      heater_temperature:
+        measurement: wxt.heater.temp
+        units: degree_Celsius
+        checks:
+          <<: *wxt_continuous_checks
+          instrument_range: {applicable: false, enabled: false}
+          negative_impossible: {applicable: false, enabled: false}
+      heater_voltage:
+        measurement: wxt.heater.volt
+        units: V
+        checks:
+          <<: *wxt_continuous_checks
+          instrument_range:
+            applicable: true
+            enabled: true
+            minimum: 10.8
+            maximum: 31.2
+            inclusive: [true, true]
+          negative_impossible: {applicable: true, enabled: true}
+      supply_voltage:
+        measurement: wxt.voltage.supply
+        units: V
+        checks:
+          <<: *wxt_continuous_checks
+          instrument_range:
+            applicable: true
+            enabled: true
+            minimum: 5.4
+            maximum: 31.2
+            inclusive: [true, true]
+          negative_impossible: {applicable: true, enabled: true}
+    instrument_conditions:
+      temperature:
+        variable: air_temperature
+        below: -52
+        above: 60
+        units: degree_Celsius
+      relative_humidity:
+        variable: relative_humidity
+        below: null
+        high_humidity_above: null
+        units: percent
+      pressure:
+        variable: air_pressure
+        below: 500
+        above: 1100
+        units: hPa
+      heater_active:
+        enabled: false
+        source_variable: heater_status
+        reason: documented_active_value_mapping_not_configured
+      instrument_status_error:
+        enabled: false
+        reason: documented_source_status_mapping_not_configured

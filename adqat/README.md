@@ -186,6 +186,16 @@ campaign are documented in
 The complete implementation context and new-session HPC handoff are in
 [`docs/plans/adqat-current-minute-qc-hpc-handoff.md`](docs/plans/adqat-current-minute-qc-hpc-handoff.md).
 
+The reviewed CROCUS WXT536/AQT530 aggregate flag semantics, variable
+applicability, manufacturer ranges, and operating-condition limits are recorded
+in the immutable
+[`standards/crocus-wxt536-aqt530-aggregate-qc-v1.0.0.yaml`](standards/crocus-wxt536-aqt530-aggregate-qc-v1.0.0.yaml).
+The standard explicitly disables checks whose numerical thresholds or status
+decoding have not yet been scientifically approved; ADQAT never infers those
+parameters from the data. It is the approved input to the next runtime change,
+not a drop-in aggregate-rules file for ADQAT 0.1.4, whose strict parser still
+implements the superseded pilot bit layout.
+
 For AQT-only testing, the manufacturer-datasheet profile is
 [`examples/quality_rules.crocus_aqt530_datasheet_test.yaml`](examples/quality_rules.crocus_aqt530_datasheet_test.yaml),
 with a two-day W08D processing example in
