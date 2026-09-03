@@ -236,20 +236,45 @@ def discover_work_units(
     ``instrument`` is collapsed away: it is part of the ingest layout, not of the work
     unit, and a work unit's glob already spans every instrument directory.
 
-    Each named VSN is globbed separately rather than filtered out of one wide listing,
-    so a caller can tell which of them found nothing.
+    Each named VSN is globbed separately, and **a named VSN that matches nothing raises**
+    rather than being dropped. The VSN list drives the whole campaign: a mistyped VSN
+    filtered out of a wide listing would just shorten the manifest, the run would
+    complete with every unit succeeding, and an entire station would be missing from the
+    output with nothing downstream able to tell. Silence is the dangerous answer here.
+
+    Listing without naming any VSN is the exploratory case and returns whatever is there,
+    including nothing.
     """
     root = dataset_root.expanduser()
     units: set[tuple[str, Date]] = set()
+    missing: list[str] = []
+    window = f" between {start} and {end}" if (start or end) else ""
+
     for vsn in vsns or [None]:
-        for path in root.glob(work_unit_pattern(vsn)):
-            if not path.is_dir():
-                continue
-            try:
-                day = datetime.strptime(path.name.removeprefix("date="), "%Y-%m-%d").date()
-            except ValueError:
-                continue  # not a date-partition directory
-            if (start and day < start) or (end and day > end):
-                continue
-            units.add((path.parents[1].name.removeprefix("vsn="), day))
+        found = _units_under(root, vsn, start, end)
+        if vsn is not None and not found:
+            missing.append(
+                f"no work units for VSN {vsn!r}{window} under {root}/{work_unit_pattern(vsn)}"
+            )
+        units |= found
+
+    if missing:
+        raise LookupError("\n".join(missing))
     return sorted(units)
+
+
+def _units_under(
+    root: Path, vsn: str | None, start: Date | None, end: Date | None
+) -> set[tuple[str, Date]]:
+    units: set[tuple[str, Date]] = set()
+    for path in root.glob(work_unit_pattern(vsn)):
+        if not path.is_dir():
+            continue
+        try:
+            day = datetime.strptime(path.name.removeprefix("date="), "%Y-%m-%d").date()
+        except ValueError:
+            continue  # not a date-partition directory
+        if (start and day < start) or (end and day > end):
+            continue
+        units.add((path.parents[1].name.removeprefix("vsn="), day))
+    return units

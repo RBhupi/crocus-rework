@@ -164,6 +164,28 @@ def test_discover_fails_loudly_when_nothing_matches(tmp_path, capsys):
     assert "facts/sensor=" in capsys.readouterr().err
 
 
+def test_discover_names_the_vsn_that_matched_nothing(tmp_path, capsys):
+    """A typo'd VSN must not just shorten the manifest.
+
+    The VSN list is what drives the whole campaign now. If W08E is silently dropped
+    because it was mistyped, the run completes, every unit succeeds, and the campaign
+    is quietly missing an entire station -- which nothing downstream can detect. The
+    other VSNs are real, so the error has to say which one was not.
+    """
+    root = tmp_path / "raw"
+    write_raw(root, [Obs(0, "wxt.env.temp", 20.0)], vsn="W08D")
+
+    exit_code = main(["discover", "--dataset", str(root), "--vsn", "W08D", "NOPE"])
+
+    assert exit_code != 0
+    captured = capsys.readouterr()
+    assert "NOPE" in captured.err
+    assert "W08D" not in captured.err
+    # Nothing on stdout: `discover > manifest.tsv` must not leave a short manifest
+    # on disk that a later run would happily process.
+    assert captured.out == ""
+
+
 def test_discover_survives_a_reader_that_closes_the_pipe(workspace, monkeypatch):
     """``discover | head`` is the documented way to eyeball a manifest."""
 

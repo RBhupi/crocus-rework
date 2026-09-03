@@ -133,9 +133,15 @@ def main(argv: list[str] | None = None) -> int:
         return _emit(_profile_lines())
 
     if args.command == "discover":
-        units = discover_work_units(
-            args.dataset, vsns=args.vsn, start=args.start, end=args.end
-        )
+        try:
+            units = discover_work_units(
+                args.dataset, vsns=args.vsn, start=args.start, end=args.end
+            )
+        except LookupError as exc:
+            # Nothing is written to stdout: `discover > manifest.tsv` must not leave a
+            # manifest that is short by exactly the VSN the operator got wrong.
+            print(exc, file=sys.stderr)
+            return 1
         if not units:
             print(
                 f"no work units matched {args.dataset}/{work_unit_pattern()}",
