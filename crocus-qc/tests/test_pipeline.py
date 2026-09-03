@@ -32,8 +32,8 @@ from conftest import DAY, SENSOR, VSN, Obs, subset, write_raw
 def dataset(tmp_path: Path) -> Path:
     """A small but real work unit: a few minutes of temperature and humidity."""
     observations = [
-        Obs(offset, "aqt.env.temp", 20.0 + offset / 100.0) for offset in range(0, 120, 3)
-    ] + [Obs(offset, "aqt.env.humidity", 55.0) for offset in range(0, 120, 3)]
+        Obs(offset, "wxt.env.temp", 20.0 + offset / 100.0) for offset in range(0, 120, 3)
+    ] + [Obs(offset, "wxt.env.humidity", 55.0) for offset in range(0, 120, 3)]
     return write_raw(tmp_path / "raw", observations)
 
 
@@ -49,12 +49,12 @@ def config(tmp_path: Path) -> PipelineConfig:
 
 
 @pytest.fixture
-def profile(aqt_profile):
+def profile(wxt_profile):
     """Two variables is enough to exercise orchestration; reduction has its own tests."""
     from dataclasses import replace
 
     return replace(
-        aqt_profile, variables=subset(aqt_profile, ["air_temperature", "relative_humidity"])
+        wxt_profile, variables=subset(wxt_profile, ["air_temperature", "relative_humidity"])
     )
 
 
@@ -209,8 +209,8 @@ def test_discover_lists_the_work_units_present(dataset):
 def test_discover_collapses_instruments_into_one_work_unit(tmp_path):
     """A work unit spans every instrument directory, so it must not be listed twice."""
     root = tmp_path / "raw"
-    for instrument in ("aqt530-001", "aqt530-002"):
-        write_raw(root, [Obs(0, "aqt.env.temp", 20.0)], instrument=instrument)
+    for instrument in ("wxt536-001", "wxt536-002"):
+        write_raw(root, [Obs(0, "wxt.env.temp", 20.0)], instrument=instrument)
 
     assert discover_work_units(root) == [(SENSOR, VSN, DAY.date())]
 
@@ -219,7 +219,7 @@ def test_discover_restricts_to_the_requested_days(tmp_path):
     root = tmp_path / "raw"
     days = [datetime(2025, 12, d, tzinfo=timezone.utc) for d in (14, 15, 16)]
     for day in days:
-        write_raw(root, [Obs(0, "aqt.env.temp", 20.0)], day=day)
+        write_raw(root, [Obs(0, "wxt.env.temp", 20.0)], day=day)
 
     found = discover_work_units(
         root, start=Date(2025, 12, 15), end=Date(2025, 12, 16)
@@ -230,8 +230,8 @@ def test_discover_restricts_to_the_requested_days(tmp_path):
 
 def test_discover_ignores_a_sensor_it_was_not_asked_for(tmp_path):
     root = tmp_path / "raw"
-    write_raw(root, [Obs(0, "aqt.env.temp", 20.0)])
-    write_raw(root, [Obs(0, "wxt.env.temp", 20.0)], sensor="vaisala-wxt536")
+    write_raw(root, [Obs(0, "wxt.env.temp", 20.0)])
+    write_raw(root, [Obs(0, "aqt.env.temp", 20.0)], sensor="vaisala-aqt530")
 
     assert [sensor for sensor, _, _ in discover_work_units(root, sensor=SENSOR)] == [SENSOR]
 
@@ -253,7 +253,7 @@ def test_failed_run_writes_no_success_marker(config, profile, tmp_path):
 def test_output_inside_the_raw_dataset_is_refused(profile, dataset, tmp_path):
     """The raw dataset is read-only input for every downstream product."""
     unsafe = PipelineConfig(
-        output_root=dataset / "sensor=vaisala-aqt530" / "products",
+        output_root=dataset / "sensor=vaisala-wxt536" / "products",
         threads=2,
         memory_limit="1GB",
         temp_dir=str(tmp_path / "scratch"),

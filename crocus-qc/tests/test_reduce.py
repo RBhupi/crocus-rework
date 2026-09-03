@@ -11,13 +11,31 @@ import math
 import pytest
 
 from conftest import DAY, Obs, bucket, run_stage1, subset
+from crocus_qc.config import VariableSpec
 
-TEMP = "aqt.env.temp"
-RH = "aqt.env.humidity"
-UPTIME = "aqt.house.uptime"
-DATETIME = "aqt.house.datetime"
+TEMP = "wxt.env.temp"
+RH = "wxt.env.humidity"
+RAIN = "wxt.rain.accumulation"
 WDIR = "wxt.wind.direction"
 HSTATUS = "wxt.heater.status"
+
+#: A text variable, built here rather than taken from a profile.
+#:
+#: String handling belongs to the SQL builder, not to an instrument: the WXT536 reports
+#: no text measurement, and adding one to the shipped YAML purely to give these two tests
+#: something to read would put a measurement in the profile that the instrument never
+#: sends. The spec lives next to the tests that need it instead.
+TEXT = "synthetic.text.value"
+TEXT_SPEC = VariableSpec(
+    name="text_value",
+    measurement=TEXT,
+    field="value",
+    value_type="string",
+    units="1",
+    aggregation="last",
+    data_type="string",
+    missing_strings=("-9999.9", ""),
+)
 
 
 def circular_distance(actual: float, expected: float) -> float:
@@ -30,7 +48,7 @@ def circular_distance(actual: float, expected: float) -> float:
 # ---------------------------------------------------------------------------------
 
 
-def test_mean_and_sample_count(tmp_path, aqt_profile):
+def test_mean_and_sample_count(tmp_path, wxt_profile):
     """10, 10, 14, 14 -> mean 12, min 10, max 14, population std 2."""
     rows = run_stage1(
         tmp_path,
@@ -40,7 +58,7 @@ def test_mean_and_sample_count(tmp_path, aqt_profile):
             Obs(3.0, TEMP, 14.0),
             Obs(4.0, TEMP, 14.0),
         ],
-        subset(aqt_profile, ["air_temperature"]),
+        subset(wxt_profile, ["air_temperature"]),
     )
     first = bucket(rows, 0)
     assert first["air_temperature"] == 12.0
@@ -51,17 +69,17 @@ def test_mean_and_sample_count(tmp_path, aqt_profile):
     assert first["air_temperature_raw_std"] == pytest.approx(2.0)
 
 
-def test_population_std_not_sample_std(tmp_path, aqt_profile):
+def test_population_std_not_sample_std(tmp_path, wxt_profile):
     """Guard against ddof=1: for 10 and 14, pop std is 2.0 but sample std is ~2.83."""
     rows = run_stage1(
         tmp_path,
         [Obs(1.0, TEMP, 10.0), Obs(2.0, TEMP, 14.0)],
-        subset(aqt_profile, ["air_temperature"]),
+        subset(wxt_profile, ["air_temperature"]),
     )
     assert bucket(rows, 0)["air_temperature_raw_std"] == 2.0
 
 
-def test_single_sample_has_no_std(tmp_path, aqt_profile):
+def test_single_sample_has_no_std(tmp_path, wxt_profile):
     """One observation measures no spread at all -- which is not the same as zero spread.
 
     ``STDDEV_POP`` returns 0.0 here, and 0.0 is a claim: it says the instrument was
@@ -72,7 +90,7 @@ def test_single_sample_has_no_std(tmp_path, aqt_profile):
     ``raw_min`` and ``raw_max`` stay populated: they really are the observed extremes.
     """
     rows = run_stage1(
-        tmp_path, [Obs(1.0, TEMP, 10.0)], subset(aqt_profile, ["air_temperature"])
+        tmp_path, [Obs(1.0, TEMP, 10.0)], subset(wxt_profile, ["air_temperature"])
     )
     first = bucket(rows, 0)
     assert first["air_temperature_n_samples"] == 1
@@ -87,12 +105,12 @@ def test_single_sample_has_no_std(tmp_path, aqt_profile):
 # ---------------------------------------------------------------------------------
 
 
-def test_missing_sentinel_is_normalized_to_null(tmp_path, aqt_profile):
+def test_missing_sentinel_is_normalized_to_null(tmp_path, wxt_profile):
     """-9999.9 must not reach AVG/MIN/STDDEV_POP; only 10 and 14 count."""
     rows = run_stage1(
         tmp_path,
         [Obs(1.0, TEMP, 10.0), Obs(2.0, TEMP, -9999.9), Obs(3.0, TEMP, 14.0)],
-        subset(aqt_profile, ["air_temperature"]),
+        subset(wxt_profile, ["air_temperature"]),
     )
     first = bucket(rows, 0)
     assert first["air_temperature_n_samples"] == 2
@@ -100,21 +118,21 @@ def test_missing_sentinel_is_normalized_to_null(tmp_path, aqt_profile):
     assert first["air_temperature_raw_min"] == 10.0
 
 
-def test_explicit_null_is_excluded(tmp_path, aqt_profile):
+def test_explicit_null_is_excluded(tmp_path, wxt_profile):
     rows = run_stage1(
         tmp_path,
         [Obs(1.0, TEMP, 10.0), Obs(2.0, TEMP, None), Obs(3.0, TEMP, 14.0)],
-        subset(aqt_profile, ["air_temperature"]),
+        subset(wxt_profile, ["air_temperature"]),
     )
     assert bucket(rows, 0)["air_temperature_n_samples"] == 2
 
 
-def test_bucket_of_only_missing_values(tmp_path, aqt_profile):
+def test_bucket_of_only_missing_values(tmp_path, wxt_profile):
     """All-sentinel bucket is indistinguishable from an empty one, by design."""
     rows = run_stage1(
         tmp_path,
         [Obs(1.0, TEMP, -9999.9), Obs(2.0, TEMP, None)],
-        subset(aqt_profile, ["air_temperature"]),
+        subset(wxt_profile, ["air_temperature"]),
     )
     first = bucket(rows, 0)
     assert first["air_temperature"] is None
@@ -122,7 +140,7 @@ def test_bucket_of_only_missing_values(tmp_path, aqt_profile):
     assert first["air_temperature_raw_std"] is None
 
 
-def test_out_of_range_values_are_retained(tmp_path, aqt_profile):
+def test_out_of_range_values_are_retained(tmp_path, wxt_profile):
     """Stage 1 applies no bounds: an absurd 500 C reading still contributes.
 
     This is the explicit acceptance criterion 'no physical/instrument filtering exists'.
@@ -130,7 +148,7 @@ def test_out_of_range_values_are_retained(tmp_path, aqt_profile):
     rows = run_stage1(
         tmp_path,
         [Obs(1.0, TEMP, 10.0), Obs(2.0, TEMP, 500.0)],
-        subset(aqt_profile, ["air_temperature"]),
+        subset(wxt_profile, ["air_temperature"]),
     )
     first = bucket(rows, 0)
     assert first["air_temperature_n_samples"] == 2
@@ -143,19 +161,19 @@ def test_out_of_range_values_are_retained(tmp_path, aqt_profile):
 # ---------------------------------------------------------------------------------
 
 
-def test_full_day_has_exactly_8640_rows(tmp_path, aqt_profile):
+def test_full_day_has_exactly_8640_rows(tmp_path, wxt_profile):
     rows = run_stage1(
-        tmp_path, [Obs(1.0, TEMP, 10.0)], subset(aqt_profile, ["air_temperature"])
+        tmp_path, [Obs(1.0, TEMP, 10.0)], subset(wxt_profile, ["air_temperature"])
     )
     assert len(rows) == 8640
 
 
-def test_empty_interval_is_explicit(tmp_path, aqt_profile):
+def test_empty_interval_is_explicit(tmp_path, wxt_profile):
     """Bucket 1 has no observations: nulls and a zero count, never interpolation."""
     rows = run_stage1(
         tmp_path,
         [Obs(1.0, TEMP, 10.0), Obs(25.0, TEMP, 30.0)],
-        subset(aqt_profile, ["air_temperature"]),
+        subset(wxt_profile, ["air_temperature"]),
     )
     empty = bucket(rows, 10)
     assert empty["air_temperature"] is None
@@ -168,21 +186,21 @@ def test_empty_interval_is_explicit(tmp_path, aqt_profile):
     assert bucket(rows, 20)["air_temperature"] == 30.0
 
 
-def test_grid_is_utc_anchored_and_evenly_spaced(tmp_path, aqt_profile):
+def test_grid_is_utc_anchored_and_evenly_spaced(tmp_path, wxt_profile):
     rows = run_stage1(
-        tmp_path, [Obs(1.0, TEMP, 10.0)], subset(aqt_profile, ["air_temperature"])
+        tmp_path, [Obs(1.0, TEMP, 10.0)], subset(wxt_profile, ["air_temperature"])
     )
     assert rows[0]["time"] == DAY
     assert rows[1]["time"].second == 10
     assert rows[-1]["time"] == DAY.replace(hour=23, minute=59, second=50)
 
 
-def test_day_boundaries(tmp_path, aqt_profile):
+def test_day_boundaries(tmp_path, wxt_profile):
     """First and last instants of the day land in the first and last buckets."""
     rows = run_stage1(
         tmp_path,
         [Obs(0.0, TEMP, 1.0), Obs(86399.9, TEMP, 2.0)],
-        subset(aqt_profile, ["air_temperature"]),
+        subset(wxt_profile, ["air_temperature"]),
     )
     assert bucket(rows, 0)["air_temperature"] == 1.0
     assert bucket(rows, 86390)["air_temperature"] == 2.0
@@ -194,7 +212,7 @@ def test_day_boundaries(tmp_path, aqt_profile):
 # ---------------------------------------------------------------------------------
 
 
-def test_irregular_timestamps_land_in_correct_buckets(tmp_path, aqt_profile):
+def test_irregular_timestamps_land_in_correct_buckets(tmp_path, wxt_profile):
     """Real ~10 Hz timestamps are irregular; each observation simply falls in its bucket."""
     rows = run_stage1(
         tmp_path,
@@ -205,7 +223,7 @@ def test_irregular_timestamps_land_in_correct_buckets(tmp_path, aqt_profile):
             Obs(10.01, TEMP, 100.0),
             Obs(19.999, TEMP, 200.0),
         ],
-        subset(aqt_profile, ["air_temperature"]),
+        subset(wxt_profile, ["air_temperature"]),
     )
     assert bucket(rows, 0)["air_temperature_n_samples"] == 3
     assert bucket(rows, 0)["air_temperature"] == 4.0
@@ -283,46 +301,46 @@ def test_mode_aggregation(tmp_path, wxt_profile):
     assert first["heater_status_n_samples"] == 3
 
 
-def test_last_value_uses_latest_timestamp_not_file_order(tmp_path, aqt_profile):
+def test_last_value_uses_latest_timestamp_not_file_order(tmp_path, wxt_profile):
     """MAX_BY on the real timestamp: the 7 s observation wins regardless of row order."""
     rows = run_stage1(
         tmp_path,
-        [Obs(7.0, UPTIME, 700.0), Obs(1.0, UPTIME, 100.0), Obs(4.0, UPTIME, 400.0)],
-        subset(aqt_profile, ["instrument_uptime"]),
+        [Obs(7.0, RAIN, 700.0), Obs(1.0, RAIN, 100.0), Obs(4.0, RAIN, 400.0)],
+        subset(wxt_profile, ["rain_accumulation"]),
     )
     first = bucket(rows, 0)
-    assert first["instrument_uptime"] == 700.0
-    assert first["instrument_uptime_n_samples"] == 3
+    assert first["rain_accumulation"] == 700.0
+    assert first["rain_accumulation_n_samples"] == 3
 
 
-def test_last_string_value(tmp_path, aqt_profile):
+def test_last_string_value(tmp_path):
     rows = run_stage1(
         tmp_path,
         [
-            Obs(1.0, DATETIME, text="2025-12-15T00:00:01"),
-            Obs(6.0, DATETIME, text="2025-12-15T00:00:06"),
+            Obs(1.0, TEXT, text="2025-12-15T00:00:01"),
+            Obs(6.0, TEXT, text="2025-12-15T00:00:06"),
         ],
-        subset(aqt_profile, ["instrument_datetime"]),
+        (TEXT_SPEC,),
     )
     first = bucket(rows, 0)
-    assert first["instrument_datetime"] == "2025-12-15T00:00:06"
-    assert first["instrument_datetime_n_samples"] == 2
+    assert first["text_value"] == "2025-12-15T00:00:06"
+    assert first["text_value_n_samples"] == 2
 
 
-def test_missing_strings_are_normalized(tmp_path, aqt_profile):
+def test_missing_strings_are_normalized(tmp_path):
     """The empty string and the textual sentinel are missing, not data."""
     rows = run_stage1(
         tmp_path,
         [
-            Obs(1.0, DATETIME, text="2025-12-15T00:00:01"),
-            Obs(6.0, DATETIME, text=""),
-            Obs(8.0, DATETIME, text="-9999.9"),
+            Obs(1.0, TEXT, text="2025-12-15T00:00:01"),
+            Obs(6.0, TEXT, text=""),
+            Obs(8.0, TEXT, text="-9999.9"),
         ],
-        subset(aqt_profile, ["instrument_datetime"]),
+        (TEXT_SPEC,),
     )
     first = bucket(rows, 0)
-    assert first["instrument_datetime"] == "2025-12-15T00:00:01"
-    assert first["instrument_datetime_n_samples"] == 1
+    assert first["text_value"] == "2025-12-15T00:00:01"
+    assert first["text_value_n_samples"] == 1
 
 
 # ---------------------------------------------------------------------------------
@@ -330,9 +348,9 @@ def test_missing_strings_are_normalized(tmp_path, aqt_profile):
 # ---------------------------------------------------------------------------------
 
 
-def test_mean_variable_carries_all_spread_statistics(tmp_path, aqt_profile):
+def test_mean_variable_carries_all_spread_statistics(tmp_path, wxt_profile):
     rows = run_stage1(
-        tmp_path, [Obs(1.0, TEMP, 10.0)], subset(aqt_profile, ["air_temperature"])
+        tmp_path, [Obs(1.0, TEMP, 10.0)], subset(wxt_profile, ["air_temperature"])
     )
     assert set(rows[0]) == {
         "time",
@@ -345,28 +363,30 @@ def test_mean_variable_carries_all_spread_statistics(tmp_path, aqt_profile):
 
 
 @pytest.mark.parametrize(
-    "profile_name,variable,measurement,omitted",
+    "variable,measurement,omitted",
     [
-        ("wxt", "wind_direction", WDIR, ["raw_min", "raw_max"]),
-        ("wxt", "heater_status", HSTATUS, ["raw_min", "raw_max", "raw_std"]),
-        ("aqt", "instrument_uptime", UPTIME, ["raw_min", "raw_max", "raw_std"]),
-        ("aqt", "instrument_datetime", DATETIME, ["raw_min", "raw_max", "raw_std"]),
+        ("wind_direction", WDIR, ["raw_min", "raw_max"]),
+        ("heater_status", HSTATUS, ["raw_min", "raw_max", "raw_std"]),
+        ("rain_accumulation", RAIN, ["raw_min", "raw_max", "raw_std"]),
     ],
 )
 def test_meaningless_statistics_are_absent(
-    tmp_path, aqt_profile, wxt_profile, profile_name, variable, measurement, omitted
+    tmp_path, wxt_profile, variable, measurement, omitted
 ):
-    profile = aqt_profile if profile_name == "aqt" else wxt_profile
-    text = "x" if variable == "instrument_datetime" else None
-    value = None if text else 1.0
     rows = run_stage1(
         tmp_path,
-        [Obs(1.0, measurement, value, text)],
-        subset(profile, [variable]),
+        [Obs(1.0, measurement, 1.0)],
+        subset(wxt_profile, [variable]),
     )
     for suffix in omitted:
         assert f"{variable}_{suffix}" not in rows[0]
     assert f"{variable}_n_samples" in rows[0]
+
+
+def test_string_variable_carries_no_spread_statistics(tmp_path):
+    """Min, max, and spread are undefined on text, so the columns are absent."""
+    rows = run_stage1(tmp_path, [Obs(1.0, TEXT, text="x")], (TEXT_SPEC,))
+    assert set(rows[0]) == {"time", "text_value", "text_value_n_samples"}
 
 
 def test_circular_variable_keeps_std_but_not_min_max(tmp_path, wxt_profile):
@@ -386,7 +406,7 @@ def test_circular_variable_keeps_std_but_not_min_max(tmp_path, wxt_profile):
 # ---------------------------------------------------------------------------------
 
 
-def test_variables_are_independent(tmp_path, aqt_profile):
+def test_variables_are_independent(tmp_path, wxt_profile):
     """One scan, many variables: each reduces only its own measurement's rows."""
     rows = run_stage1(
         tmp_path,
@@ -397,7 +417,7 @@ def test_variables_are_independent(tmp_path, aqt_profile):
             Obs(2.5, RH, 60.0),
             Obs(3.0, RH, 80.0),
         ],
-        subset(aqt_profile, ["air_temperature", "relative_humidity"]),
+        subset(wxt_profile, ["air_temperature", "relative_humidity"]),
     )
     first = bucket(rows, 0)
     assert first["air_temperature"] == 12.0
@@ -406,15 +426,15 @@ def test_variables_are_independent(tmp_path, aqt_profile):
     assert first["relative_humidity_n_samples"] == 3
 
 
-def test_variable_absent_from_raw_data_yields_nulls(tmp_path, aqt_profile):
+def test_variable_absent_from_raw_data_yields_nulls(tmp_path, wxt_profile):
     """A profile variable the instrument never reported is all-null, not an error."""
     rows = run_stage1(
         tmp_path,
         [Obs(1.0, TEMP, 10.0)],
-        subset(aqt_profile, ["air_temperature", "ozone"]),
+        subset(wxt_profile, ["air_temperature", "air_pressure"]),
     )
     first = bucket(rows, 0)
     assert first["air_temperature"] == 10.0
-    assert first["ozone"] is None
-    assert first["ozone_n_samples"] == 0
-    assert sum(r["ozone_n_samples"] for r in rows) == 0
+    assert first["air_pressure"] is None
+    assert first["air_pressure_n_samples"] == 0
+    assert sum(r["air_pressure_n_samples"] for r in rows) == 0

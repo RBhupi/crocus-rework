@@ -25,9 +25,9 @@ from crocus_qc.config import TEN_SECONDS, VariableSpec, load_profile
 from crocus_qc.reduce import build_stage1_sql, session_setup_sql
 
 DAY = datetime(2025, 12, 15, tzinfo=timezone.utc)
-SENSOR = "vaisala-aqt530"
+SENSOR = "vaisala-wxt536"
 VSN = "W08D"
-INSTRUMENT = "aqt530-001"
+INSTRUMENT = "wxt536-001"
 
 
 def fact_schema() -> pa.Schema:
@@ -167,11 +167,6 @@ def run_stage1(
 def bucket(rows: Sequence[dict[str, Any]], offset_seconds: int) -> dict[str, Any]:
     """The dense-grid row whose bucket starts ``offset_seconds`` into the day."""
     return rows[offset_seconds // TEN_SECONDS.seconds]
-
-
-@pytest.fixture
-def aqt_profile():
-    return load_profile("aqt530")
 
 
 @pytest.fixture

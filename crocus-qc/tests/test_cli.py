@@ -19,7 +19,7 @@ from conftest import DAY, SENSOR, VSN, Obs, write_raw
 def workspace(tmp_path: Path) -> dict[str, Path]:
     dataset = write_raw(
         tmp_path / "raw",
-        [Obs(offset, "aqt.env.temp", 21.0) for offset in range(0, 60, 5)],
+        [Obs(offset, "wxt.env.temp", 21.0) for offset in range(0, 60, 5)],
     )
     config = tmp_path / "pipeline.yaml"
     config.write_text(
@@ -38,7 +38,7 @@ def run_argv(workspace: dict[str, Path], *extra: str) -> int:
             "--date", f"{DAY:%Y-%m-%d}",
             "--dataset", str(workspace["dataset"]),
             "--config", str(workspace["config"]),
-            "--profile", "aqt530",
+            "--profile", "wxt536",
             *extra,
         ]
     )
@@ -69,7 +69,7 @@ def test_explain_reports_a_plan_without_publishing(workspace, capsys):
             "--date", f"{DAY:%Y-%m-%d}",
             "--dataset", str(workspace["dataset"]),
             "--config", str(workspace["config"]),
-            "--profile", "aqt530",
+            "--profile", "wxt536",
         ]
     )
 
@@ -89,7 +89,7 @@ def test_explain_analyze_executes_without_publishing(workspace, capsys):
             "--date", f"{DAY:%Y-%m-%d}",
             "--dataset", str(workspace["dataset"]),
             "--config", str(workspace["config"]),
-            "--profile", "aqt530",
+            "--profile", "wxt536",
         ]
     )
 
@@ -152,7 +152,7 @@ def test_profiles_lists_bundled_instruments(capsys):
     assert main(["profiles"]) == 0
 
     out = capsys.readouterr().out
-    assert "aqt530" in out and "wxt536" in out
+    assert "wxt536" in out
     assert "wind_direction" in out
 
 
@@ -167,6 +167,6 @@ def test_a_malformed_date_is_rejected(workspace):
                 "--date", "15-12-2025",
                 "--dataset", str(workspace["dataset"]),
                 "--config", str(workspace["config"]),
-                "--profile", "aqt530",
+                "--profile", "wxt536",
             ]
         )
