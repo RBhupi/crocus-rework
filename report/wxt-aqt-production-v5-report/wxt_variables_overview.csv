@@ -1,0 +1,12 @@
+variable_id,measurement,field,description,units,missing_value,vsn_count,instrument_count,series_count,fact_row_count,start_time_utc,end_time_utc
+vaisala-wxt536::wxt.env.humidity::value,wxt.env.humidity,value,,percent,-9999.9,22,22,120,6009703719,2023-05-05T03:30:10.267826229Z,2025-12-16T20:14:11.123246352Z
+vaisala-wxt536::wxt.env.pressure::value,wxt.env.pressure,value,,hectoPascal,-9999.9,22,22,120,6009703550,2023-05-05T03:30:10.267826229Z,2025-12-16T20:14:11.123246352Z
+vaisala-wxt536::wxt.env.temp::value,wxt.env.temp,value,,degree Celsius,-9999.9,22,22,120,6009704036,2023-05-05T03:30:10.267826229Z,2025-12-16T20:14:11.123246352Z
+vaisala-wxt536::wxt.hail.accumulation::value,wxt.hail.accumulation,value,,hits per square centimeter,-9999.9,10,10,35,1562254433,2023-05-07T02:21:21.499867054Z,2025-12-16T20:01:57.860974712Z
+vaisala-wxt536::wxt.heater.status::value,wxt.heater.status,value,,unitless,-9999.9,18,18,123,4707271864,2024-10-22T20:21:27.084569012Z,2025-12-16T20:14:11.123246352Z
+vaisala-wxt536::wxt.heater.temp::value,wxt.heater.temp,value,,degree Celsius,-9999.9,21,21,116,6009376932,2023-05-05T03:30:10.267826229Z,2025-12-16T20:14:11.123246352Z
+vaisala-wxt536::wxt.heater.volt::value,wxt.heater.volt,value,,volts,-9999.9,21,21,116,6009376762,2023-05-05T03:30:10.267826229Z,2025-12-16T20:14:11.123246352Z
+vaisala-wxt536::wxt.rain.accumulation::value,wxt.rain.accumulation,value,,milimeters,-9999.9,22,22,121,6010976192,2023-05-05T03:30:10.267826229Z,2025-12-16T20:14:11.123246352Z
+vaisala-wxt536::wxt.voltage.supply::value,wxt.voltage.supply,value,,volts,-9999.9,1,1,9,433027607,2024-06-20T22:49:31.596996864Z,2025-12-16T20:01:57.860974712Z
+vaisala-wxt536::wxt.wind.direction::value,wxt.wind.direction,value,,degrees,-9999.9,22,22,120,6012868573,2023-05-05T03:30:10.267826229Z,2025-12-16T20:14:11.123246352Z
+vaisala-wxt536::wxt.wind.speed::value,wxt.wind.speed,value,,meters per second,-9999.9,22,22,120,6012868234,2023-05-05T03:30:10.267826229Z,2025-12-16T20:14:11.123246352Z

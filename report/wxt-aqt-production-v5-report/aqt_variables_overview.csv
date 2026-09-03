@@ -1,0 +1,13 @@
+variable_id,measurement,field,description,units,missing_value,vsn_count,instrument_count,series_count,fact_row_count,start_time_utc,end_time_utc
+vaisala-aqt530::aqt.env.humidity::value,aqt.env.humidity,value,Ambient Relative Humidity,percent relative humidity,-9999.9,15,15,53,20909442,2023-05-05T03:33:05.096190631Z,2025-12-16T20:15:13.458363039Z
+vaisala-aqt530::aqt.env.pressure::value,aqt.env.pressure,value,Ambient Atmospheric Pressure,hPa,-9999.9,15,15,53,20909441,2023-05-05T03:33:05.096190631Z,2025-12-16T20:15:13.458363039Z
+vaisala-aqt530::aqt.env.temp::value,aqt.env.temp,value,Ambient Temperature,degrees Celsius,-9999.9,15,15,53,20909447,2023-05-05T03:33:05.096190631Z,2025-12-16T20:15:13.458363039Z
+vaisala-aqt530::aqt.gas.co::value,aqt.gas.co,value,Carbon Monoxide Gas Concentration,ppm,-9999.9,15,15,53,20909435,2023-05-05T03:33:05.096190631Z,2025-12-16T20:15:13.458363039Z
+vaisala-aqt530::aqt.gas.no::value,aqt.gas.no,value,Nitric Oxide Gas Concentration,ppm,-9999.9,15,15,53,20909436,2023-05-05T03:33:05.096190631Z,2025-12-16T20:15:13.458363039Z
+vaisala-aqt530::aqt.gas.no2::value,aqt.gas.no2,value,Nitrogen Dioxide Gas Concentration,ppm,-9999.9,15,15,53,20909439,2023-05-05T03:33:05.096190631Z,2025-12-16T20:15:13.458363039Z
+vaisala-aqt530::aqt.gas.ozone::value,aqt.gas.ozone,value,Ozone Gas Concentration,ppm,-9999.9,15,15,53,20909433,2023-05-05T03:33:05.096190631Z,2025-12-16T20:15:13.458363039Z
+vaisala-aqt530::aqt.house.datetime::value,aqt.house.datetime,value,UTC time in YYYY-MM-DDTHH:MM:SS format,UTC time,-9999.9,15,15,53,20909429,2023-05-05T03:33:05.096190631Z,2025-12-16T20:15:13.458363039Z
+vaisala-aqt530::aqt.house.uptime::value,aqt.house.uptime,value,Time in seconds since instrument startup,seconds,-9999.9,15,15,53,20909428,2023-05-05T03:33:05.096190631Z,2025-12-16T20:15:13.458363039Z
+vaisala-aqt530::aqt.particle.pm1::value,aqt.particle.pm1,value,Particulate Matter less than 1 microns in diameter,microgram per cubic meter,-9999.9,15,15,53,20909436,2023-05-05T03:33:05.096190631Z,2025-12-16T20:15:13.458363039Z
+vaisala-aqt530::aqt.particle.pm10::value,aqt.particle.pm10,value,Particulate Matter less than 10 microns in diameter,microgram per cubic meter,-9999.9,15,15,53,20909433,2023-05-05T03:33:05.096190631Z,2025-12-16T20:15:13.458363039Z
+vaisala-aqt530::aqt.particle.pm2.5::value,aqt.particle.pm2.5,value,Particulate Matter less than 2.5 microns in diameter,microgram per cubic meter,-9999.9,15,15,53,20909434,2023-05-05T03:33:05.096190631Z,2025-12-16T20:15:13.458363039Z

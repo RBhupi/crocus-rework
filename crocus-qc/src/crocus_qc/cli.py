@@ -2,14 +2,15 @@
 
 Four subcommands, each answering one operational question:
 
-``run``       produce the 10-second product for one work unit (what SLURM invokes)
-``explain``   show the DuckDB plan for that same work unit, publishing nothing
-``discover``  list the work units present in a dataset (a SLURM array manifest)
+``run``       produce the 10-second products for one VSN over a range of days (SLURM)
+``explain``   show the DuckDB plan for a single day, publishing nothing
+``discover``  list the work units present in a dataset (which VSNs, which days)
 ``profiles``  list the bundled instrument profiles and their variables
 
-``run`` prints the provenance record as JSON on **stdout** and the phase timing table on
-**stderr**, so a SLURM job's ``--output`` file stays machine-readable while the operator
-still sees where the time went in the ``--error`` file.
+A SLURM task is a VSN, not a day, so ``run`` walks a calendar and prints **one JSON
+record per line** on **stdout** -- JSONL, greppable, one whole record per line -- with
+the phase timing tables on **stderr**. A job's ``--output`` file stays machine-readable
+while the operator still sees where the time went in the ``--error`` file.
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ from .config import PROFILE, PROFILE_DIR, SENSOR, load_config, load_profile
 from .pipeline import (
     discover_work_units,
     explain_work_unit,
-    run_work_unit,
+    run_vsn,
     work_unit_pattern,
 )
 from .timing import Stopwatch
@@ -69,14 +70,12 @@ def _iso_date(text: str) -> Date:
         raise argparse.ArgumentTypeError(f"expected YYYY-MM-DD, got {text!r}") from exc
 
 
-def _add_work_unit_args(parser: argparse.ArgumentParser) -> None:
-    """The two coordinates of a work unit, plus where to read and where to write.
+def _add_io_args(parser: argparse.ArgumentParser) -> None:
+    """Where to read and where to write.
 
     No ``--sensor`` and no ``--profile``: this package reduces the WXT536, so both are
     module constants (see ``config.SENSOR``).
     """
-    parser.add_argument("--vsn", required=True, help="e.g. W08D")
-    parser.add_argument("--date", required=True, type=_iso_date, help="UTC day, YYYY-MM-DD")
     parser.add_argument("--dataset", required=True, type=Path, help="raw Parquet dataset root")
     parser.add_argument("--config", required=True, type=Path, help="pipeline YAML")
 
@@ -88,8 +87,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    run = sub.add_parser("run", help="produce the 10-second product for one work unit")
-    _add_work_unit_args(run)
+    run = sub.add_parser("run", help="produce the 10-second product for one VSN's days")
+    run.add_argument("--vsn", required=True, help="e.g. W08D")
+    run.add_argument(
+        "--start", required=True, type=_iso_date, help="first UTC day, inclusive"
+    )
+    run.add_argument("--end", required=True, type=_iso_date, help="last UTC day, inclusive")
+    _add_io_args(run)
     run.add_argument(
         "--force", action="store_true", help="recompute even if _success.json is present"
     )
@@ -101,7 +105,9 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--quiet", action="store_true", help="suppress the phase timing table")
 
     explain = sub.add_parser("explain", help="print the DuckDB query plan; publish nothing")
-    _add_work_unit_args(explain)
+    explain.add_argument("--vsn", required=True, help="e.g. W08D")
+    explain.add_argument("--date", required=True, type=_iso_date, help="UTC day, YYYY-MM-DD")
+    _add_io_args(explain)
     explain.add_argument(
         "--analyze",
         action="store_true",
@@ -154,26 +160,47 @@ def main(argv: list[str] | None = None) -> int:
         config = load_config(args.config)
     with watch.phase("load_profile"):
         profile = load_profile(PROFILE)
-    common = dict(
-        sensor=SENSOR,
+
+    if args.command == "explain":
+        print(
+            explain_work_unit(
+                sensor=SENSOR,
+                vsn=args.vsn,
+                day=args.date,
+                dataset_root=args.dataset,
+                config=config,
+                profile=profile,
+                analyze=args.analyze,
+            )
+        )
+        return 0
+
+    if not args.quiet:
+        # Startup is paid once for the whole job, so it is reported once, before the
+        # calendar starts -- not folded into the first day's numbers.
+        print(f"startup timings for {args.vsn}", file=sys.stderr)
+        print(watch.table(), file=sys.stderr)
+
+    for record, day_watch in run_vsn(
         vsn=args.vsn,
-        day=args.date,
+        start=args.start,
+        end=args.end,
         dataset_root=args.dataset,
         config=config,
         profile=profile,
-    )
-
-    if args.command == "explain":
-        print(explain_work_unit(**common, analyze=args.analyze))
-        return 0
-
-    record = run_work_unit(
-        **common, force=args.force, stopwatch=watch, sql_profile=args.sql_profile
-    )
-    print(json.dumps(record, indent=2, sort_keys=True))
-    if not args.quiet:
-        print(f"phase timings for {args.vsn} {args.date:%Y-%m-%d}", file=sys.stderr)
-        print(watch.table(), file=sys.stderr)
+        force=args.force,
+        sql_profile=args.sql_profile,
+    ):
+        # One whole record per line. A job now spans hundreds of days, so stdout is a
+        # stream rather than a document: pretty-printed objects concatenated together
+        # are not parseable, and `jq` and `grep` both want a line to be a record.
+        print(json.dumps(record, sort_keys=True))
+        # Flushed per day so a redirected log stays live for hours-long jobs instead of
+        # arriving in 8 KiB blocks.
+        sys.stdout.flush()
+        if not args.quiet:
+            print(f"phase timings for {args.vsn} {record['date']}", file=sys.stderr)
+            print(day_watch.table(), file=sys.stderr)
     return 0
 
 

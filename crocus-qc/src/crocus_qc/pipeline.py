@@ -1,8 +1,9 @@
 """Work-unit orchestration: build SQL, run DuckDB, finalize atomically, record provenance.
 
-One invocation processes one work unit (sensor x VSN x instrument x UTC day). There is
-no internal concurrency across days or VSNs: DuckDB provides node-level parallelism and
-SLURM provides cluster-level parallelism.
+One invocation processes one VSN, walking its calendar a day at a time. The days are
+sequential -- there is no internal concurrency across them, and none across VSNs either:
+DuckDB provides node-level parallelism and SLURM provides cluster-level parallelism, one
+job per station.
 
 Python does no analytical work here. It never iterates raw rows, never computes a
 statistic, and never materializes the raw dataset -- the whole reduction happens inside
@@ -15,9 +16,9 @@ on the cluster can be diagnosed from its output directory alone.
 from __future__ import annotations
 
 import os
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from datetime import date as Date
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -171,6 +172,55 @@ def run_work_unit(
     # The provenance write is the last phase, so it cannot appear in the record it
     # writes; it is reported to the operator through the stopwatch instead.
     return record
+
+
+def run_vsn(
+    *,
+    vsn: str,
+    start: Date,
+    end: Date,
+    dataset_root: Path,
+    config: PipelineConfig,
+    profile: SensorProfile,
+    period: AggregationPeriod = TEN_SECONDS,
+    force: bool = False,
+    sql_profile: bool = False,
+) -> Iterator[tuple[dict[str, Any], Stopwatch]]:
+    """Reduce every UTC day from ``start`` to ``end``, inclusive, for one VSN.
+
+    A job is a VSN, not a day. A station carries on the order of 600 days, and a process
+    per station-day would be that many interpreter and DuckDB startups for SLURM to
+    schedule, queue, and log -- around a reduction that takes about a second. Walking the
+    calendar inside one process amortises all of it, and SLURM still parallelises across
+    stations, which is where the independence actually is.
+
+    The calendar is walked rather than discovered. Listing the date partitions first
+    would only tell us what reading them tells us anyway, at the cost of a second NFS
+    traversal per job.
+
+    Days are yielded lazily, one at a time, so a long job reports each day as it lands
+    rather than at the end. Each day gets its own stopwatch: a shared one would fold
+    yesterday's timings into today's provenance record. The stopwatch is yielded
+    alongside the record because it outlives it -- the provenance write is still running
+    when the record it writes is serialised, so that phase can only be reported here.
+    """
+    day = start
+    while day <= end:
+        watch = Stopwatch()
+        record = run_work_unit(
+            sensor=SENSOR,
+            vsn=vsn,
+            day=day,
+            dataset_root=dataset_root,
+            config=config,
+            profile=profile,
+            period=period,
+            force=force,
+            stopwatch=watch,
+            sql_profile=sql_profile,
+        )
+        yield record, watch
+        day += timedelta(days=1)
 
 
 def explain_work_unit(
