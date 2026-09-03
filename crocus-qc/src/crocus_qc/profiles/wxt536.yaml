@@ -1,0 +1,95 @@
+# Vaisala WXT536 profile -- Stage 1 statistical reduction.
+#
+# Stage 1 performs no QA/QC. See aqt530.yaml for the rationale.
+#
+# aggregation:
+#   mean          -> AVG, plus raw_min / raw_max / raw_std
+#   circular_mean -> sin/cos vector mean, plus circular raw_std (no min/max)
+#   mode          -> most frequent value (no min/max/std)
+#   last          -> latest value in the bucket by observation timestamp (no min/max/std)
+
+schema_version: 2
+sensor: vaisala-wxt536
+instrument_label: wxt536
+
+variables:
+  air_temperature:
+    measurement: wxt.env.temp
+    field: value
+    value_type: float64
+    units: degree_Celsius
+    aggregation: mean
+
+  relative_humidity:
+    measurement: wxt.env.humidity
+    field: value
+    value_type: float64
+    units: percent
+    aggregation: mean
+
+  air_pressure:
+    measurement: wxt.env.pressure
+    field: value
+    value_type: float64
+    units: hPa
+    aggregation: mean
+
+  wind_speed:
+    measurement: wxt.wind.speed
+    field: value
+    value_type: float64
+    units: m s-1
+    aggregation: mean
+
+  # Circular domain: an arithmetic mean of 359 and 1 gives 180 (due south) instead of
+  # 0 (due north), and min/max have no meaning on a circle.
+  wind_direction:
+    measurement: wxt.wind.direction
+    field: value
+    value_type: float64
+    units: degree
+    aggregation: circular_mean
+
+  # Cumulative counters: bucket mean/min/max/std are not meaningful.
+  rain_accumulation:
+    measurement: wxt.rain.accumulation
+    field: value
+    value_type: float64
+    units: mm
+    aggregation: last
+
+  hail_accumulation:
+    measurement: wxt.hail.accumulation
+    field: value
+    value_type: float64
+    units: hits cm-2
+    aggregation: last
+
+  heater_temperature:
+    measurement: wxt.heater.temp
+    field: value
+    value_type: float64
+    units: degree_Celsius
+    aggregation: mean
+
+  heater_voltage:
+    measurement: wxt.heater.volt
+    field: value
+    value_type: float64
+    units: V
+    aggregation: mean
+
+  # Categorical status code: averaging it would be nonsense.
+  heater_status:
+    measurement: wxt.heater.status
+    field: value
+    value_type: float64
+    units: "1"
+    aggregation: mode
+
+  supply_voltage:
+    measurement: wxt.voltage.supply
+    field: value
+    value_type: float64
+    units: V
+    aggregation: mean

@@ -1,0 +1,2 @@
+# Benchmark scratch: synthetic Hive partitions at production row counts, several GB.
+bench-work/

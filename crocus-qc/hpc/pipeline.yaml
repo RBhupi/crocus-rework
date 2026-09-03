@@ -1,0 +1,19 @@
+# Execution configuration for the CROCUS cluster.
+#
+# output.root MUST NOT be under the production facts tree
+# (/nfs/gce/projects/crocus-server-admins/data-rework/crocus-rework-output/wxt-aqt-production-v5).
+# The pipeline refuses to start if it is; edit this path to your own project space.
+output:
+  root: /nfs/gce/projects/crocus-server-admins/data-rework/crocus-qc-output/10sec-v0.1.0
+
+execution:
+  # Leave threads and memory_limit unset to inherit the SLURM allocation:
+  #   threads      <- SLURM_CPUS_PER_TASK
+  #   memory_limit <- 80% of SLURM_MEM_PER_NODE (headroom for the Python process)
+  #   temp_dir     <- $TMPDIR, else $SCRATCH, else /tmp
+  #
+  # Set them here only to override the allocation deliberately.
+  #
+  # threads: 8
+  # memory_limit: 6GB
+  temp_dir: null
