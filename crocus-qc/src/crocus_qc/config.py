@@ -21,6 +21,17 @@ import yaml
 
 PROFILE_DIR = Path(__file__).parent / "profiles"
 
+#: The one instrument this package reduces, and the profile that describes it.
+#:
+#: Not a default that a flag may override -- the whole scope. The AQT530 samples once
+#: per 20 seconds, so a 10-second average of it is the raw observation on a half-empty
+#: grid: averaging is a WXT536 operation and there is nothing for a ``--sensor`` to
+#: select. Keeping them as constants also removes a real failure mode, since a sensor
+#: and a profile passed as separate arguments can be transposed, and a transposed pair
+#: matches no measurement, produces an all-NULL product, and still reports success.
+SENSOR = "vaisala-wxt536"
+PROFILE = "wxt536"
+
 #: Sentinel written by the raw ingest for "instrument reported no value".
 #:
 #: This is the *only* value-level normalization Stage 1 performs. It is not a QC check:

@@ -30,15 +30,20 @@ def workspace(tmp_path: Path) -> dict[str, Path]:
 
 
 def run_argv(workspace: dict[str, Path], *extra: str) -> int:
+    """One work unit, named by the only two things that vary: which VSN, which day.
+
+    There is no ``--sensor`` and no ``--profile``. This package reduces the WXT536 and
+    nothing else, so both flags could only ever take one value -- and passing them
+    separately is how a transposed pair produces an all-NULL product that still writes
+    ``_success.json``.
+    """
     return main(
         [
             "run",
-            "--sensor", SENSOR,
             "--vsn", VSN,
             "--date", f"{DAY:%Y-%m-%d}",
             "--dataset", str(workspace["dataset"]),
             "--config", str(workspace["config"]),
-            "--profile", "wxt536",
             *extra,
         ]
     )
@@ -64,12 +69,10 @@ def test_explain_reports_a_plan_without_publishing(workspace, capsys):
     exit_code = main(
         [
             "explain",
-            "--sensor", SENSOR,
             "--vsn", VSN,
             "--date", f"{DAY:%Y-%m-%d}",
             "--dataset", str(workspace["dataset"]),
             "--config", str(workspace["config"]),
-            "--profile", "wxt536",
         ]
     )
 
@@ -84,12 +87,10 @@ def test_explain_analyze_executes_without_publishing(workspace, capsys):
     main(
         [
             "explain", "--analyze",
-            "--sensor", SENSOR,
             "--vsn", VSN,
             "--date", f"{DAY:%Y-%m-%d}",
             "--dataset", str(workspace["dataset"]),
             "--config", str(workspace["config"]),
-            "--profile", "wxt536",
         ]
     )
 
@@ -162,11 +163,9 @@ def test_a_malformed_date_is_rejected(workspace):
         main(
             [
                 "run",
-                "--sensor", SENSOR,
                 "--vsn", VSN,
                 "--date", "15-12-2025",
                 "--dataset", str(workspace["dataset"]),
                 "--config", str(workspace["config"]),
-                "--profile", "wxt536",
             ]
         )

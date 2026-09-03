@@ -24,7 +24,7 @@ from datetime import date as Date
 from datetime import datetime
 from pathlib import Path
 
-from .config import PROFILE_DIR, load_config, load_profile
+from .config import PROFILE, PROFILE_DIR, SENSOR, load_config, load_profile
 from .pipeline import (
     discover_work_units,
     explain_work_unit,
@@ -70,16 +70,15 @@ def _iso_date(text: str) -> Date:
 
 
 def _add_work_unit_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--sensor", required=True, help="e.g. vaisala-aqt530")
+    """The two coordinates of a work unit, plus where to read and where to write.
+
+    No ``--sensor`` and no ``--profile``: this package reduces the WXT536, so both are
+    module constants (see ``config.SENSOR``).
+    """
     parser.add_argument("--vsn", required=True, help="e.g. W08D")
     parser.add_argument("--date", required=True, type=_iso_date, help="UTC day, YYYY-MM-DD")
     parser.add_argument("--dataset", required=True, type=Path, help="raw Parquet dataset root")
     parser.add_argument("--config", required=True, type=Path, help="pipeline YAML")
-    parser.add_argument(
-        "--profile",
-        required=True,
-        help="instrument profile: a bundled name (aqt530, wxt536) or a path to a YAML file",
-    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -145,9 +144,9 @@ def main(argv: list[str] | None = None) -> int:
     with watch.phase("load_config"):
         config = load_config(args.config)
     with watch.phase("load_profile"):
-        profile = load_profile(args.profile)
+        profile = load_profile(PROFILE)
     common = dict(
-        sensor=args.sensor,
+        sensor=SENSOR,
         vsn=args.vsn,
         day=args.date,
         dataset_root=args.dataset,
@@ -164,7 +163,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     print(json.dumps(record, indent=2, sort_keys=True))
     if not args.quiet:
-        print(f"phase timings for {args.sensor} {args.vsn} {args.date:%Y-%m-%d}", file=sys.stderr)
+        print(f"phase timings for {args.vsn} {args.date:%Y-%m-%d}", file=sys.stderr)
         print(watch.table(), file=sys.stderr)
     return 0
 
