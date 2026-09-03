@@ -1,5 +1,12 @@
 # Stage 1 performance verification
 
+> **Measured against v0.1.0, when this package still reduced both instruments.** The
+> AQT530 columns below are kept as the record of what was measured, not as guidance: as
+> of v0.2.0 the package reduces the WXT536 only, and `benchmarks/stage1_benchmark.py`
+> no longer has an AQT case to reproduce them with. The WXT536 numbers still stand —
+> the v0.2.0 changes are a `CASE` guard on one aggregate and a Python-level day loop,
+> neither of which touches the scan or the `GROUP BY`.
+
 Reproduce with:
 
 ```bash

@@ -1,9 +1,14 @@
 # crocus-qc
 
-Reduces CROCUS high-frequency observations to a **10-second statistical product**.
+Reduces CROCUS **Vaisala WXT536** high-frequency observations to a **10-second
+statistical product**.
 
-One invocation processes one **work unit**: `sensor × VSN × instrument × UTC day`. SLURM
-parallelises independent work units; the package contains no distributed computing.
+One invocation processes one **station**, walking that VSN's UTC days in order. SLURM
+parallelises independent stations; the package contains no distributed computing.
+
+Only the WXT536. The AQT530 samples once per 20 seconds, so a 10-second average of it is
+the raw observation on a half-empty grid, and no bucket could ever carry a spread
+statistic — averaging is a WXT536 operation. There is no `--sensor` flag.
 
 ```
 raw Parquet (immutable, Hive-partitioned)
@@ -32,7 +37,7 @@ time order, whether or not the instrument reported. Per variable:
 | `{v}_n_samples` | all | observations that contributed; `0` for an empty bucket |
 | `{v}_raw_min` | `mean` | smallest contributing observation |
 | `{v}_raw_max` | `mean` | largest contributing observation |
-| `{v}_raw_std` | `mean`, `circular_mean` | population standard deviation (`STDDEV_POP`, ddof=0) |
+| `{v}_raw_std` | `mean`, `circular_mean` | population standard deviation (`STDDEV_POP`, ddof=0), NULL below two samples |
 
 Statistics that are not scientifically meaningful for a variable are **absent**, not
 present-and-null: `wind_direction` has no min/max (ordering is undefined on a circle),
@@ -47,8 +52,10 @@ Aggregation is per variable, from its profile:
 | `mode` | `heater_status` | `MODE` |
 | `last` | accumulators, housekeeping | `MAX_BY(value, time)` — latest by real timestamp |
 
-Empty buckets are explicit: value NULL, `n_samples` 0, spread NULL. Nothing is
-interpolated and no timestamp is invented. Irregular raw sampling is preserved — each
+Empty buckets are explicit: value NULL, `n_samples` 0, spread NULL. A bucket holding a
+single observation reports its value, min, and max but a NULL `raw_std` — one sample
+measures no spread, and `STDDEV_POP` over one row returns 0.0, which reads as "perfectly
+stable" instead. Nothing is interpolated and no timestamp is invented. Irregular raw sampling is preserved — each
 observation simply belongs to the bucket its timestamp falls in.
 
 ## Design constraints
@@ -77,16 +84,23 @@ pip install -e '.[dev]'
 
 ## Use
 
+One job is one station. `run` walks that VSN's calendar itself, skipping days with no
+raw partitions; omit `--start`/`--end` and it uses the station's own first and last day.
+
 ```bash
-crocus-qc run --sensor vaisala-aqt530 --vsn W08D --date 2025-12-15 --dataset /nfs/gce/projects/crocus-server-admins/data-rework/crocus-rework-output/wxt-aqt-production-v5 --config pipeline.yaml --profile aqt530
+crocus-qc run --vsn W08D --dataset /nfs/gce/projects/crocus-server-admins/data-rework/crocus-rework-output/wxt-aqt-production-v5 --config pipeline.yaml
 ```
 
 ```bash
-crocus-qc explain --analyze --sensor vaisala-aqt530 --vsn W08D --date 2025-12-15 --dataset /path/to/dataset --config pipeline.yaml --profile aqt530
+crocus-qc run --vsn W08D --start 2025-12-15 --end 2025-12-16 --dataset /path/to/dataset --config pipeline.yaml
 ```
 
 ```bash
-crocus-qc discover --dataset /path/to/dataset --sensor vaisala-wxt536 --start 2025-12-15 --end 2025-12-16
+crocus-qc explain --analyze --vsn W08D --date 2025-12-15 --dataset /path/to/dataset --config pipeline.yaml
+```
+
+```bash
+crocus-qc discover --dataset /path/to/dataset --vsn W08D W08E --start 2025-12-15 --end 2025-12-16
 ```
 
 ```bash
@@ -125,8 +139,11 @@ from its output directory alone:
   total                   0.500s
 ```
 
-The provenance JSON goes to stdout, so a SLURM `--output` file stays machine-readable
-while the operator reads timings in `--error`. `--quiet` suppresses the table.
+Provenance goes to stdout as JSONL — one whole record per line, one line per day
+produced — so a SLURM `--output` file stays machine-readable and greppable while the
+operator reads timings in `--error`. `--quiet` suppresses the tables; skipped and failed
+days are still reported, since a range that vanished in silence is what a wrong
+`--dataset` looks like.
 
 Phase timings say *which phase* was slow. When that phase is `execute_reduction`,
 `--sql-profile` additionally writes DuckDB's per-operator profile to
@@ -150,11 +167,11 @@ recomputing; `--force` overrides that.
 src/crocus_qc/
   reduce.py      the Stage 1 SQL builder — where all the analytical logic lives
   config.py      frozen dataclasses over YAML; no Pydantic
-  pipeline.py    run one work unit: execute, finalise atomically, record provenance
+  pipeline.py    walk a station's calendar: execute, finalise atomically, record provenance
   provenance.py  _success.json
   timing.py      per-phase wall clock
   cli.py         argparse
-  profiles/      aqt530.yaml, wxt536.yaml — how to find and reduce each variable
+  profiles/      wxt536.yaml — how to find and reduce each variable
 tests/
   test_reduce.py    statistical behaviour, asserted on the product's columns
   test_pipeline.py  publication, idempotency, determinism, timing, discovery

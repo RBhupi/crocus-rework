@@ -9,15 +9,15 @@ compute host `compute-386-07`, quota via `dfq`). Two conventions are inherited f
 > `Slurm: sbatch was not available` on `compute-386-07`, and both earlier stages ran
 > under `nohup`. Check with `command -v sbatch` before planning around
 > [`stage1_array.sbatch`](stage1_array.sbatch); if it is missing, use
-> [`run_manifest.sh`](run_manifest.sh), which is the same one-process-per-work-unit
-> model with `xargs` in place of the scheduler.
+> [`run_vsns.sh`](run_vsns.sh), which is the same one-process-per-station model
+> with `xargs` in place of the scheduler.
 
 ## 0. Paths
 
 | | |
 |---|---|
 | Input (read-only) | `/nfs/gce/projects/crocus-server-admins/data-rework/crocus-rework-output/wxt-aqt-production-v5` |
-| Output | `/nfs/gce/projects/crocus-server-admins/data-rework/crocus-qc-output/10sec-v0.1.0` |
+| Output | `/nfs/gce/projects/crocus-server-admins/data-rework/crocus-qc-output/wxt536-10sec-v0.2.0` |
 | Environment | `/nfs/gce/projects/crocus-server-admins/data-rework/envs/crocus-qc` |
 | Checkout | `/nfs/gce/projects/crocus-server-admins/data-rework/crocus-rework/crocus-qc` |
 
@@ -26,9 +26,14 @@ begins one level down (`.../wxt-aqt-production-v5/facts/sensor=.../vsn=.../instr
 and `crocus-qc` appends `facts/` itself. Passing the version root also means the
 "never write inside the raw dataset" guard covers the whole versioned tree.
 
-Output follows the same version-suffix convention as the input (`-v5` there, `-v0.1.0`
+Output follows the same version-suffix convention as the input (`-v5` there, `-v0.2.0`
 here): a changed product definition gets a new output root rather than overwriting an
-existing one.
+existing one. v0.2.0 is the first version where `raw_std` is NULL below two samples
+rather than 0.0, so its products are not interchangeable with v0.1.0's.
+
+This package reduces the **WXT536 only**. The AQT530 samples once per 20 seconds, so a
+10-second average of it is the raw observation on a half-empty grid; its route to
+publication is a `native` product, not an aggregate. There is no `--sensor` flag.
 
 ## 1. Install
 
@@ -71,12 +76,18 @@ venv or `export PATH="$BASE/envs/crocus-qc/bin:$PATH"`.
 
 ```bash
 crocus-qc discover --dataset "$DATASET" --start 2025-12-15 --end 2025-12-16
+crocus-qc discover --dataset "$DATASET" | cut -f1 | sort | uniq -c   # days per station
 ```
 
-Directory listing only — no Parquet is opened. Matching nothing is an error, not an
-empty result: `discover` exits non-zero and prints the glob it tried, so you can see
-which level of the tree stopped matching. The usual cause is `--dataset` pointing at
-`.../facts` instead of the version root above it.
+Directory listing only — no Parquet is opened. Rows are `vsn<TAB>date`. Matching nothing
+is an error, not an empty result: `discover` exits non-zero and prints the glob it tried,
+so you can see which level of the tree stopped matching. The usual cause is `--dataset`
+pointing at `.../facts` instead of the version root above it.
+
+Naming stations with `--vsn W08D W08E` restricts the listing, and **a named VSN that
+matches nothing is an error, reported by name** — a typo would otherwise just shorten the
+list, and a campaign built from a short list completes successfully while quietly missing
+a whole station.
 
 Confirm the checkout is current before believing a negative result — a stale working
 copy produces exactly the same empty listing as a wrong path:
@@ -99,8 +110,8 @@ resolves inside `--dataset`; that check is the last line of defence, not the pla
 Leave `threads` and `memory_limit` unset and they follow the SLURM allocation
 (`SLURM_CPUS_PER_TASK`, 80% of `SLURM_MEM_PER_NODE`). **With no scheduler there is no
 allocation to follow** — `threads` then defaults to every core on the node, which is
-wrong as soon as you run more than one work unit at a time. Set both explicitly when
-using `run_manifest.sh`.
+wrong as soon as you run more than one station at a time. Set both explicitly when
+using `run_vsns.sh`.
 
 ## 4. First run: two days, in the foreground
 
@@ -108,14 +119,15 @@ using `run_manifest.sh`.
 bash hpc/two_day_trial.sh 2025-12-15 2025-12-16
 ```
 
-Four work units: WXT536 and AQT530, two days each, with `--sql-profile`. Under SLURM,
-wrap it in `salloc --cpus-per-task=8 --mem=8G --time=01:00:00` first.
+One station over a two-day window, with `--sql-profile`. The two arguments are the
+inclusive ends of the window, not a list of days: `run` walks the calendar itself. Under
+SLURM, wrap it in `salloc --cpus-per-task=8 --mem=8G --time=01:00:00` first.
 
-For each work unit you get:
+For each day you get:
 
 | where | what |
 |---|---|
-| stdout | the provenance record as JSON (row count, elapsed, timings, versions) |
+| stdout | one JSON provenance record per line (row count, elapsed, timings, versions) |
 | stderr | the phase timing table — which phase was slow |
 | `<out>/<sensor>/<vsn>/<date>/10sec.parquet` | the product, exactly 8640 rows |
 | `<out>/.../_success.json` | the same provenance record, written last |
@@ -147,56 +159,79 @@ different fixes: more bandwidth versus more CPUs.
 
 ## 5. Scaling up
 
-Build manifests (directory listing only):
+**A job is a station, not a station-day.** One process walks a VSN's whole calendar, so
+~7,000 station-days collapse into ~11 processes. Seven thousand one-day jobs would be
+seven thousand interpreter and DuckDB startups for the scheduler to queue and log, around
+a reduction that takes about a second — and the days within a station have to be serial
+anyway. Parallelism goes where the independence is: across stations.
+
+Confirm the station list first, since it now drives the whole campaign:
 
 ```bash
-mkdir -p manifests logs
-crocus-qc discover --dataset "$DATASET" --sensor vaisala-wxt536 > manifests/wxt.tsv
-crocus-qc discover --dataset "$DATASET" --sensor vaisala-aqt530 > manifests/aqt.tsv
+mkdir -p logs
+crocus-qc discover --dataset "$DATASET" | cut -f1 | sort -u > vsns.txt
+cat vsns.txt
 ```
+
+Days are **not** enumerated up front. `run` walks the calendar and skips days with no raw
+partitions, one stderr line each, so there is no manifest to keep in step with the tree.
 
 ### Without a scheduler
 
 ```bash
-bash hpc/run_manifest.sh manifests/aqt.tsv aqt530 8
-bash hpc/run_manifest.sh manifests/wxt.tsv wxt536 4
+bash hpc/run_vsns.sh 4 $(cat vsns.txt)
 ```
 
-The last argument is how many work units run at once. Size it against the node, not the
-manifest: each unit asks DuckDB for `execution.threads`, so 4 concurrent units on a
-`threads: 8` config want 32 cores. AQT is tiny, so run more of it at lower thread counts.
-For a long campaign, put it under `nohup` as the earlier stages did:
+The first argument is how many stations run at once. Size it against the node, not the
+station count: each process asks DuckDB for `execution.threads`, so 4 concurrent stations
+on a `threads: 8` config want 32 cores. For a long campaign, put it under `nohup` as the
+earlier stages did:
 
 ```bash
-nohup bash hpc/run_manifest.sh manifests/wxt.tsv wxt536 4 > logs/wxt-campaign.log 2>&1 &
+nohup bash hpc/run_vsns.sh 4 $(cat vsns.txt) > logs/wxt-campaign.log 2>&1 &
 ```
 
-A failing work unit is logged and counted, not fatal — one bad day does not cost the
-other 956. The script exits non-zero if any unit failed.
+Per station you get `logs/<vsn>.jsonl` (one provenance record per day produced) and
+`logs/<vsn>.log` (timings, skips, failures). A failing day is logged and counted, not
+fatal — one bad block should not cost the other 599 days — and both the station process
+and the batch exit non-zero if anything failed.
+
+Restrict the window with `START` / `END`; omitted, each station uses its own first and
+last day present:
+
+```bash
+START=2025-11-01 END=2025-11-30 bash hpc/run_vsns.sh 4 W08D W08E
+```
 
 ### With SLURM
 
-One array task per work unit, sized by the measured thread scaling
+One array task per station, sized by the measured thread scaling
 (see [`../docs/stage1-performance.md`](../docs/stage1-performance.md)): WXT536 scales to
-×4.5 at 8 threads, AQT530 gets *slower* past 2.
+×4.5 at 8 threads.
 
 ```bash
-MANIFEST=manifests/wxt.tsv PROFILE=wxt536 \
-  sbatch --array=1-$(wc -l < manifests/wxt.tsv) --cpus-per-task=8 hpc/stage1_array.sbatch
+VSNS=vsns.txt sbatch --array=1-$(wc -l < vsns.txt) --cpus-per-task=8 \
+  hpc/stage1_array.sbatch
 ```
 
-```bash
-MANIFEST=manifests/aqt.tsv PROFILE=aqt530 \
-  sbatch --array=1-$(wc -l < manifests/aqt.tsv) --cpus-per-task=2 hpc/stage1_array.sbatch
-```
+A station is now hours rather than seconds, so `--time` in `stage1_array.sbatch` is 4h
+rather than 30m. Check it against your longest station: ~1.2 s per day × its day count.
 
 `stage1_array.sbatch` sets no `--partition`, `--account`, or `--qos`, because none is
 recorded anywhere in this project. Add whatever this cluster requires before submitting.
 
 ## 6. Restarting
 
-A work unit with a `_success.json` is skipped without touching DuckDB, so rerunning the
-same manifest or resubmitting the same array reprocesses only what did not finish. No
-bookkeeping is needed beyond the output tree itself. A killed job leaves a
-`10sec.parquet.tmp` and no marker, so it is simply rerun. `--force` recomputes
-deliberately.
+Rerun the identical command. A day with a `_success.json` is skipped without touching
+DuckDB, and a day with no raw partitions creates nothing, so a rerun redoes exactly the
+days that failed. No bookkeeping is needed beyond the output tree itself. A killed job
+leaves a `10sec.parquet.tmp` and no marker, so that day is simply redone. `--force`
+recomputes deliberately.
+
+Confirm completeness from the output tree alone rather than from the logs:
+
+```bash
+find "$OUT" -name '_success.json' -exec grep -h output_row_count {} \; | sort | uniq -c
+```
+
+One line reading `8640`. Anything else is a partial campaign.

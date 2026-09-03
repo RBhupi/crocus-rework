@@ -1,8 +1,8 @@
 """Benchmark Stage 1 against a full-scale synthetic day.
 
 Run this on the HPC node against the real dataset by passing ``--dataset``; without it,
-the script synthesises a day at production row counts (WXT536 at ~10 Hz, AQT530 at
-~0.05 Hz) so the plan and the scaling curve can be inspected off-cluster.
+the script synthesises a day at the production row count (WXT536 at ~10 Hz) so the plan
+and the scaling curve can be inspected off-cluster.
 
     python benchmarks/stage1_benchmark.py                       # synthetic
     python benchmarks/stage1_benchmark.py --dataset /nfs/...    # real partitions
@@ -33,7 +33,6 @@ DAY = Date(2025, 12, 15)
 #: Row counts and sampling rates from the ADQAT pilot on W08D.
 CASES = {
     "wxt536": {"sensor": "vaisala-wxt536", "vsn": "W08D", "hz": 10.0},
-    "aqt530": {"sensor": "vaisala-aqt530", "vsn": "W08D", "hz": 0.05},
 }
 
 

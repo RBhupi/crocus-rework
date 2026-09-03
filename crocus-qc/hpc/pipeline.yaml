@@ -1,15 +1,20 @@
 # Execution configuration for the CROCUS cluster.
 #
+# The version suffix on output.root is part of the product definition, not decoration:
+# a successful run is never overwritten, so a changed reduction gets a new root. v0.2.0
+# is the first where raw_std is NULL below two samples rather than 0.0, so its products
+# are not interchangeable with v0.1.0's.
+#
 # output.root MUST NOT be under the production facts tree
 # (/nfs/gce/projects/crocus-server-admins/data-rework/crocus-rework-output/wxt-aqt-production-v5).
 # The pipeline refuses to start if it is; edit this path to your own project space.
 output:
-  root: /nfs/gce/projects/crocus-server-admins/data-rework/crocus-qc-output/10sec-v0.1.0
+  root: /nfs/gce/projects/crocus-server-admins/data-rework/crocus-qc-output/wxt536-10sec-v0.2.0
 
 execution:
   # With no scheduler (sbatch was not available on compute-386-07), set these
   # explicitly: threads would otherwise default to every core on the node, which is
-  # wrong as soon as run_manifest.sh runs more than one work unit at a time.
+  # wrong as soon as run_vsns.sh runs more than one station at a time.
   threads: 8
   memory_limit: 4GB
 
