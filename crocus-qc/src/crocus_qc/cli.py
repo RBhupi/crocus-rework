@@ -15,15 +15,51 @@ still sees where the time went in the ``--error`` file.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
+import os
 import sys
+from collections.abc import Iterable, Iterator
 from datetime import date as Date
 from datetime import datetime
 from pathlib import Path
 
 from .config import PROFILE_DIR, load_config, load_profile
-from .pipeline import discover_work_units, explain_work_unit, run_work_unit
+from .pipeline import (
+    discover_work_units,
+    explain_work_unit,
+    run_work_unit,
+    work_unit_pattern,
+)
 from .timing import Stopwatch
+
+
+def _profile_lines() -> Iterator[str]:
+    for path in sorted(PROFILE_DIR.glob("*.yaml")):
+        profile = load_profile(path)
+        yield f"{path.stem}  ({profile.sensor})"
+        for spec in profile.variables:
+            yield f"    {spec.name:<26} {spec.measurement:<24} {spec.aggregation}"
+
+
+def _emit(lines: Iterable[str]) -> int:
+    """Write a listing to stdout, tolerating a reader that stops early.
+
+    ``discover`` and ``profiles`` are both meant to be piped into ``head``, ``grep``, or
+    ``awk``, any of which may close the pipe before the last line. That is ordinary shell
+    behaviour, not an error, so it must not surface as a traceback.
+    """
+    try:
+        for line in lines:
+            print(line)
+        sys.stdout.flush()
+    except BrokenPipeError:
+        # The interpreter flushes stdout again on exit and would report a second, more
+        # confusing BrokenPipeError from outside our control. Point the file descriptor
+        # at the null device so that final flush lands somewhere harmless.
+        with contextlib.suppress(AttributeError, OSError, ValueError):
+            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+    return 0
 
 
 def _iso_date(text: str) -> Date:
@@ -91,19 +127,20 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
     if args.command == "profiles":
-        for path in sorted(PROFILE_DIR.glob("*.yaml")):
-            profile = load_profile(path)
-            print(f"{path.stem}  ({profile.sensor})")
-            for spec in profile.variables:
-                print(f"    {spec.name:<26} {spec.measurement:<24} {spec.aggregation}")
-        return 0
+        return _emit(_profile_lines())
 
     if args.command == "discover":
-        for sensor, vsn, day in discover_work_units(
+        units = discover_work_units(
             args.dataset, sensor=args.sensor, vsn=args.vsn, start=args.start, end=args.end
-        ):
-            print(f"{sensor}\t{vsn}\t{day:%Y-%m-%d}")
-        return 0
+        )
+        if not units:
+            print(
+                f"no work units matched {args.dataset}/"
+                f"{work_unit_pattern(args.sensor, args.vsn)}",
+                file=sys.stderr,
+            )
+            return 1
+        return _emit(f"{sensor}\t{vsn}\t{day:%Y-%m-%d}" for sensor, vsn, day in units)
 
     with watch.phase("load_config"):
         config = load_config(args.config)

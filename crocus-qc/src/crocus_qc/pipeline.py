@@ -208,6 +208,16 @@ def explain_work_unit(
     return "\n".join(str(cell) for row in rows for cell in row)
 
 
+def work_unit_pattern(sensor: str | None = None, vsn: str | None = None) -> str:
+    """The directory glob, relative to the dataset root, that work units live under.
+
+    Exposed so that a search finding nothing can report what it looked for: the failure
+    mode is a plausible-but-wrong ``--dataset``, and the pattern is the fastest way to
+    see which level of the tree stopped matching.
+    """
+    return f"{FACTS_DIR}/sensor={sensor or '*'}/vsn={vsn or '*'}/instrument=*/date=*"
+
+
 def discover_work_units(
     dataset_root: Path,
     *,
@@ -227,7 +237,7 @@ def discover_work_units(
     """
     root = dataset_root.expanduser()
     units: set[tuple[str, str, Date]] = set()
-    pattern = f"{FACTS_DIR}/sensor={sensor or '*'}/vsn={vsn or '*'}/instrument=*/date=*"
+    pattern = work_unit_pattern(sensor, vsn)
     for path in root.glob(pattern):
         if not path.is_dir():
             continue

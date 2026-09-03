@@ -73,10 +73,17 @@ venv or `export PATH="$BASE/envs/crocus-qc/bin:$PATH"`.
 crocus-qc discover --dataset "$DATASET" --start 2025-12-15 --end 2025-12-16
 ```
 
-Directory listing only — no Parquet is opened. Empty output means `--dataset` is wrong
-(most likely pointed at `.../facts` instead of the version root, or at a tree that has
-been moved to global scratch). Fix the path before going further; the run itself would
-fail with `No files found that match the pattern`, which names the glob it tried.
+Directory listing only — no Parquet is opened. Matching nothing is an error, not an
+empty result: `discover` exits non-zero and prints the glob it tried, so you can see
+which level of the tree stopped matching. The usual cause is `--dataset` pointing at
+`.../facts` instead of the version root above it.
+
+Confirm the checkout is current before believing a negative result — a stale working
+copy produces exactly the same empty listing as a wrong path:
+
+```bash
+git -C "$BASE/crocus-rework" log --oneline -1
+```
 
 Also check headroom before a large campaign:
 

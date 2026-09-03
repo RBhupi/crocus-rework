@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -116,6 +117,35 @@ def test_discover_lists_work_units_as_a_tab_separated_manifest(workspace, capsys
 
     assert exit_code == 0
     assert capsys.readouterr().out == f"{SENSOR}\t{VSN}\t{DAY:%Y-%m-%d}\n"
+
+
+def test_discover_fails_loudly_when_nothing_matches(tmp_path, capsys):
+    """Silence cost a debugging session once already.
+
+    ``discover`` globs directories, so a wrong ``--dataset`` produces exactly the same
+    empty output as a real dataset with no days in range. Downstream that is worse than
+    a crash: ``run_manifest.sh`` on an empty manifest processes nothing and exits 0,
+    which reads as success.
+    """
+    exit_code = main(["discover", "--dataset", str(tmp_path / "not-a-dataset")])
+
+    assert exit_code != 0
+    assert "facts/sensor=" in capsys.readouterr().err
+
+
+def test_discover_survives_a_reader_that_closes_the_pipe(workspace, monkeypatch):
+    """``discover | head`` is the documented way to eyeball a manifest."""
+
+    class ClosedPipe:
+        def write(self, _text: str) -> int:
+            raise BrokenPipeError
+
+        def flush(self) -> None:
+            raise BrokenPipeError
+
+    monkeypatch.setattr(sys, "stdout", ClosedPipe())
+
+    assert main(["discover", "--dataset", str(workspace["dataset"])]) == 0
 
 
 def test_profiles_lists_bundled_instruments(capsys):
