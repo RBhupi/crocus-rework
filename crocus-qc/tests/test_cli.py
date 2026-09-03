@@ -114,10 +114,40 @@ def test_quiet_suppresses_the_phase_breakdown(workspace, capsys):
 
 
 def test_discover_lists_work_units_as_a_tab_separated_manifest(workspace, capsys):
+    """A work unit is a VSN and a day, so a manifest row is a VSN and a day.
+
+    The sensor column is gone with ``--sensor``: it would repeat the same constant on
+    every line, and run_manifest.sh would have to skip a field it can never use.
+    """
     exit_code = main(["discover", "--dataset", str(workspace["dataset"])])
 
     assert exit_code == 0
-    assert capsys.readouterr().out == f"{SENSOR}\t{VSN}\t{DAY:%Y-%m-%d}\n"
+    assert capsys.readouterr().out == f"{VSN}\t{DAY:%Y-%m-%d}\n"
+
+
+def test_discover_lists_every_named_vsn(tmp_path, capsys):
+    """The operator names the VSNs to work on, and gets exactly those back."""
+    root = tmp_path / "raw"
+    for vsn in ("W08D", "W08E", "W096"):
+        write_raw(root, [Obs(0, "wxt.env.temp", 20.0)], vsn=vsn)
+
+    assert main(["discover", "--dataset", str(root), "--vsn", "W08D", "W08E"]) == 0
+
+    assert capsys.readouterr().out == (
+        f"W08D\t{DAY:%Y-%m-%d}\n"
+        f"W08E\t{DAY:%Y-%m-%d}\n"
+    )
+
+
+def test_discover_without_vsns_lists_them_all(tmp_path, capsys):
+    """Omitting ``--vsn`` is the exploratory case: what is in this dataset at all?"""
+    root = tmp_path / "raw"
+    for vsn in ("W08D", "W08E"):
+        write_raw(root, [Obs(0, "wxt.env.temp", 20.0)], vsn=vsn)
+
+    assert main(["discover", "--dataset", str(root)]) == 0
+
+    assert capsys.readouterr().out.count("\n") == 2
 
 
 def test_discover_fails_loudly_when_nothing_matches(tmp_path, capsys):

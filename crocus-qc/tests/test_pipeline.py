@@ -203,7 +203,7 @@ def test_no_duckdb_profile_is_written_unless_asked(config, profile, dataset):
 
 
 def test_discover_lists_the_work_units_present(dataset):
-    assert discover_work_units(dataset) == [(SENSOR, VSN, DAY.date())]
+    assert discover_work_units(dataset) == [(VSN, DAY.date())]
 
 
 def test_discover_collapses_instruments_into_one_work_unit(tmp_path):
@@ -212,7 +212,7 @@ def test_discover_collapses_instruments_into_one_work_unit(tmp_path):
     for instrument in ("wxt536-001", "wxt536-002"):
         write_raw(root, [Obs(0, "wxt.env.temp", 20.0)], instrument=instrument)
 
-    assert discover_work_units(root) == [(SENSOR, VSN, DAY.date())]
+    assert discover_work_units(root) == [(VSN, DAY.date())]
 
 
 def test_discover_restricts_to_the_requested_days(tmp_path):
@@ -225,15 +225,31 @@ def test_discover_restricts_to_the_requested_days(tmp_path):
         root, start=Date(2025, 12, 15), end=Date(2025, 12, 16)
     )
 
-    assert [day for _, _, day in found] == [Date(2025, 12, 15), Date(2025, 12, 16)]
+    assert [day for _, day in found] == [Date(2025, 12, 15), Date(2025, 12, 16)]
 
 
-def test_discover_ignores_a_sensor_it_was_not_asked_for(tmp_path):
+def test_discover_ignores_partitions_from_other_instruments(tmp_path):
+    """The dataset holds every instrument; this package reduces one of them.
+
+    There is no flag to get this wrong -- the sensor level of the glob is pinned to
+    the WXT536, so an AQT530 partition sharing the same VSN and day is simply not a
+    work unit here.
+    """
     root = tmp_path / "raw"
     write_raw(root, [Obs(0, "wxt.env.temp", 20.0)])
     write_raw(root, [Obs(0, "aqt.env.temp", 20.0)], sensor="vaisala-aqt530")
 
-    assert [sensor for sensor, _, _ in discover_work_units(root, sensor=SENSOR)] == [SENSOR]
+    assert discover_work_units(root) == [(VSN, DAY.date())]
+
+
+def test_discover_lists_only_the_named_vsns(tmp_path):
+    root = tmp_path / "raw"
+    for vsn in ("W08D", "W08E", "W096"):
+        write_raw(root, [Obs(0, "wxt.env.temp", 20.0)], vsn=vsn)
+
+    found = discover_work_units(root, vsns=["W096", "W08D"])
+
+    assert [vsn for vsn, _ in found] == ["W08D", "W096"]
 
 
 # ------------------------------------------------------------------------------------

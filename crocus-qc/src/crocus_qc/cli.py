@@ -109,11 +109,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     discover = sub.add_parser(
-        "discover", help="list sensor/vsn/date work units present in a dataset"
+        "discover", help="list vsn/date work units present in a dataset"
     )
     discover.add_argument("--dataset", required=True, type=Path, help="raw Parquet dataset root")
-    discover.add_argument("--sensor", help="restrict to one sensor")
-    discover.add_argument("--vsn", help="restrict to one VSN")
+    discover.add_argument(
+        "--vsn",
+        nargs="+",
+        metavar="VSN",
+        help="the VSNs to work on, e.g. --vsn W08D W08E; omit to list every WXT536 VSN",
+    )
     discover.add_argument("--start", type=_iso_date, help="earliest UTC day, inclusive")
     discover.add_argument("--end", type=_iso_date, help="latest UTC day, inclusive")
 
@@ -130,16 +134,15 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "discover":
         units = discover_work_units(
-            args.dataset, sensor=args.sensor, vsn=args.vsn, start=args.start, end=args.end
+            args.dataset, vsns=args.vsn, start=args.start, end=args.end
         )
         if not units:
             print(
-                f"no work units matched {args.dataset}/"
-                f"{work_unit_pattern(args.sensor, args.vsn)}",
+                f"no work units matched {args.dataset}/{work_unit_pattern()}",
                 file=sys.stderr,
             )
             return 1
-        return _emit(f"{sensor}\t{vsn}\t{day:%Y-%m-%d}" for sensor, vsn, day in units)
+        return _emit(f"{vsn}\t{day:%Y-%m-%d}" for vsn, day in units)
 
     with watch.phase("load_config"):
         config = load_config(args.config)

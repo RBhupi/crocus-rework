@@ -15,6 +15,7 @@ on the cluster can be diagnosed from its output directory alone.
 from __future__ import annotations
 
 import os
+from collections.abc import Sequence
 from datetime import date as Date
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,7 +24,7 @@ from typing import Any
 import duckdb
 
 from . import __version__
-from .config import TEN_SECONDS, AggregationPeriod, PipelineConfig, SensorProfile
+from .config import SENSOR, TEN_SECONDS, AggregationPeriod, PipelineConfig, SensorProfile
 from .provenance import SUCCESS_NAME, git_commit, read_provenance, write_json_atomic
 from .reduce import FACTS_DIR, build_stage1_sql, raw_glob, session_setup_sql
 from .timing import Stopwatch
@@ -208,50 +209,47 @@ def explain_work_unit(
     return "\n".join(str(cell) for row in rows for cell in row)
 
 
-def work_unit_pattern(sensor: str | None = None, vsn: str | None = None) -> str:
+def work_unit_pattern(vsn: str | None = None) -> str:
     """The directory glob, relative to the dataset root, that work units live under.
 
     Exposed so that a search finding nothing can report what it looked for: the failure
-    mode is a plausible-but-wrong ``--dataset``, and the pattern is the fastest way to
-    see which level of the tree stopped matching.
+    mode is a plausible-but-wrong ``--dataset`` or a mistyped VSN, and the pattern is the
+    fastest way to see which level of the tree stopped matching. The sensor level is
+    pinned to ``SENSOR``, so a dataset holding other instruments lists only the WXT536.
     """
-    return f"{FACTS_DIR}/sensor={sensor or '*'}/vsn={vsn or '*'}/instrument=*/date=*"
+    return f"{FACTS_DIR}/sensor={SENSOR}/vsn={vsn or '*'}/instrument=*/date=*"
 
 
 def discover_work_units(
     dataset_root: Path,
     *,
-    sensor: str | None = None,
-    vsn: str | None = None,
+    vsns: Sequence[str] | None = None,
     start: Date | None = None,
     end: Date | None = None,
-) -> list[tuple[str, str, Date]]:
-    """List the ``(sensor, vsn, day)`` work units present in the dataset.
+) -> list[tuple[str, Date]]:
+    """List the ``(vsn, day)`` work units present in the dataset.
 
     This reads directory names only -- no Parquet file is opened -- because its job is
-    to build a SLURM array manifest, and on NFS listing four levels of Hive directories
-    is cheap where opening files is not.
+    to build a job-array manifest, and on NFS listing four levels of Hive directories is
+    cheap where opening files is not.
 
     ``instrument`` is collapsed away: it is part of the ingest layout, not of the work
     unit, and a work unit's glob already spans every instrument directory.
+
+    Each named VSN is globbed separately rather than filtered out of one wide listing,
+    so a caller can tell which of them found nothing.
     """
     root = dataset_root.expanduser()
-    units: set[tuple[str, str, Date]] = set()
-    pattern = work_unit_pattern(sensor, vsn)
-    for path in root.glob(pattern):
-        if not path.is_dir():
-            continue
-        try:
-            day = datetime.strptime(path.name.removeprefix("date="), "%Y-%m-%d").date()
-        except ValueError:
-            continue  # not a date-partition directory
-        if (start and day < start) or (end and day > end):
-            continue
-        units.add(
-            (
-                path.parents[2].name.removeprefix("sensor="),
-                path.parents[1].name.removeprefix("vsn="),
-                day,
-            )
-        )
+    units: set[tuple[str, Date]] = set()
+    for vsn in vsns or [None]:
+        for path in root.glob(work_unit_pattern(vsn)):
+            if not path.is_dir():
+                continue
+            try:
+                day = datetime.strptime(path.name.removeprefix("date="), "%Y-%m-%d").date()
+            except ValueError:
+                continue  # not a date-partition directory
+            if (start and day < start) or (end and day > end):
+                continue
+            units.add((path.parents[1].name.removeprefix("vsn="), day))
     return sorted(units)
