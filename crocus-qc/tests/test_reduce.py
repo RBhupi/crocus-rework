@@ -61,16 +61,25 @@ def test_population_std_not_sample_std(tmp_path, aqt_profile):
     assert bucket(rows, 0)["air_temperature_raw_std"] == 2.0
 
 
-def test_single_sample_std_is_zero(tmp_path, aqt_profile):
-    """One observation has zero population spread (sample std would be undefined)."""
+def test_single_sample_has_no_std(tmp_path, aqt_profile):
+    """One observation measures no spread at all -- which is not the same as zero spread.
+
+    ``STDDEV_POP`` returns 0.0 here, and 0.0 is a claim: it says the instrument was
+    perfectly steady across the bucket. A downstream ``raw_low_stdev`` check reading that
+    column cannot tell the claim apart from a genuinely stuck sensor. NULL says the only
+    true thing, which is that one sample supports no spread statistic.
+
+    ``raw_min`` and ``raw_max`` stay populated: they really are the observed extremes.
+    """
     rows = run_stage1(
         tmp_path, [Obs(1.0, TEMP, 10.0)], subset(aqt_profile, ["air_temperature"])
     )
     first = bucket(rows, 0)
     assert first["air_temperature_n_samples"] == 1
-    assert first["air_temperature_raw_std"] == 0.0
+    assert first["air_temperature_raw_std"] is None
     assert first["air_temperature_raw_min"] == 10.0
     assert first["air_temperature_raw_max"] == 10.0
+    assert first["air_temperature"] == 10.0
 
 
 # ---------------------------------------------------------------------------------
@@ -241,6 +250,22 @@ def test_opposing_directions_give_large_circular_spread(tmp_path, wxt_profile):
         subset(wxt_profile, ["wind_direction"]),
     )
     assert bucket(rows, 0)["wind_direction_raw_std"] > 100.0
+
+
+def test_single_direction_has_no_circular_spread(tmp_path, wxt_profile):
+    """The circular form reaches 0.0 by a different route than STDDEV_POP, same result.
+
+    With one direction the mean resultant length is exactly 1, so ``LN(1)`` is 0 and the
+    circular sigma is 0.0 -- "the wind held perfectly steady" from a single reading. The
+    bearing itself is real and stays; only the spread is unsupported.
+    """
+    rows = run_stage1(
+        tmp_path, [Obs(1.0, WDIR, 137.0)], subset(wxt_profile, ["wind_direction"])
+    )
+    first = bucket(rows, 0)
+    assert first["wind_direction_n_samples"] == 1
+    assert circular_distance(first["wind_direction"], 137.0) < 1e-6
+    assert first["wind_direction_raw_std"] is None
 
 
 def test_mode_aggregation(tmp_path, wxt_profile):

@@ -116,6 +116,22 @@ def _present(spec: VariableSpec) -> str:
 # --------------------------------------------------------------------------------------
 
 
+def _spread(where: str, expression: str) -> str:
+    """Wrap a spread statistic so it is NULL until two samples support it.
+
+    Every spread expression here reports 0.0 for a single sample rather than NULL --
+    ``STDDEV_POP`` by definition, and the circular form because one direction gives a
+    resultant length of exactly 1, so ``LN(1)`` is 0. Zero is not the truth: it claims
+    the instrument held perfectly steady, which a downstream ``raw_low_stdev`` check
+    cannot distinguish from a genuinely stuck sensor. NULL says what is actually known.
+
+    The count is recomputed here rather than referenced as ``{name}_n_samples`` because
+    a SELECT list cannot refer to its own aliases; DuckDB evaluates both from the same
+    grouped scan, so this costs no extra pass.
+    """
+    return f"CASE WHEN COUNT(*) FILTER (WHERE {where}) >= 2 THEN {expression} END"
+
+
 def _aggregation_block(spec: VariableSpec) -> list[str]:
     """The grouped expressions for one variable, all evaluated in the same scan."""
     name, where = spec.name, _present(spec)
@@ -127,7 +143,7 @@ def _aggregation_block(spec: VariableSpec) -> list[str]:
         columns += [
             f"MIN(v) FILTER (WHERE {where}) AS {name}_raw_min",
             f"MAX(v) FILTER (WHERE {where}) AS {name}_raw_max",
-            f"STDDEV_POP(v) FILTER (WHERE {where}) AS {name}_raw_std",
+            f"{_spread(where, f'STDDEV_POP(v) FILTER (WHERE {where})')} AS {name}_raw_std",
         ]
     elif spec.aggregation == "circular_mean":
         # A plain mean is wrong on a circular domain: 359 and 1 average to 180 (south)
@@ -143,7 +159,8 @@ def _aggregation_block(spec: VariableSpec) -> list[str]:
         # Circular standard deviation from the mean resultant length R. As directions
         # cancel R tends to 0 and the spread diverges; GREATEST guards LN(0).
         columns.append(
-            f"DEGREES(SQRT(-2.0 * LN(GREATEST({resultant}, 1e-15)))) AS {name}_raw_std"
+            f"{_spread(where, f'DEGREES(SQRT(-2.0 * LN(GREATEST({resultant}, 1e-15))))')} "
+            f"AS {name}_raw_std"
         )
     elif spec.aggregation == "mode":
         columns.insert(0, f"MODE(v) FILTER (WHERE {where}) AS {name}")
