@@ -216,20 +216,56 @@ def run_vsn(
             day += timedelta(days=1)
             continue
         watch = Stopwatch()
-        record = run_work_unit(
-            sensor=SENSOR,
-            vsn=vsn,
-            day=day,
-            dataset_root=dataset_root,
-            config=config,
-            profile=profile,
-            period=period,
-            force=force,
-            stopwatch=watch,
-            sql_profile=sql_profile,
-        )
+        try:
+            record = run_work_unit(
+                sensor=SENSOR,
+                vsn=vsn,
+                day=day,
+                dataset_root=dataset_root,
+                config=config,
+                profile=profile,
+                period=period,
+                force=force,
+                stopwatch=watch,
+                sql_profile=sql_profile,
+            )
+        except (duckdb.Error, OSError) as exc:
+            record = _failure_record(vsn, day, dataset_root, exc, watch)
         yield record, watch
         day += timedelta(days=1)
+
+
+def _failure_record(
+    vsn: str, day: Date, dataset_root: Path, exc: Exception, watch: Stopwatch
+) -> dict[str, Any]:
+    """Describe a day that could not be reduced, and let the calendar continue.
+
+    A job is on the order of 600 days, so aborting on the first unreadable file would
+    throw away the rest over one bad block or one NFS blip. Continuing is safe only
+    because ``_success.json`` gates each day: rerunning the identical command redoes
+    exactly the days that failed and skips the ones that did not.
+
+    Only DuckDB and filesystem errors land here. A ``ValueError`` -- a refused output
+    root, a malformed profile -- would be true of every day in the range, so it is left
+    to propagate and stop the job rather than be reported 600 times.
+
+    The failure is both yielded (so it appears in the JSONL stream, where
+    ``jq 'select(.status != "success")'`` finds it) and announced on stderr (where an
+    operator reads a SLURM job's ``--error`` file). It carries no ``output_path``: the
+    day published nothing.
+    """
+    print(f"failed {vsn} {day:%Y-%m-%d}: {type(exc).__name__}: {exc}", file=sys.stderr)
+    return {
+        "status": "failed",
+        "pipeline_version": __version__,
+        "sensor": SENSOR,
+        "vsn": vsn,
+        "date": f"{day:%Y-%m-%d}",
+        "input_glob": raw_glob(str(dataset_root), SENSOR, vsn, day),
+        "error_type": type(exc).__name__,
+        "error": str(exc),
+        "timings_seconds": watch.as_dict(),
+    }
 
 
 def _resolve_range(

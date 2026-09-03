@@ -220,6 +220,61 @@ def test_without_a_range_the_vsn_supplies_its_own(tmp_path, capsys):
     assert produced == ["2025-12-14", "2025-12-16", "2025-12-19"]
 
 
+def test_one_bad_day_does_not_abandon_the_rest(tmp_path, capsys):
+    """A day that genuinely fails is reported and left unpublished; the calendar goes on.
+
+    A job is now ~600 days, so aborting on the first unreadable file would throw away
+    the other 599 over one bad block or one NFS blip. Continuing is safe precisely
+    because ``_success.json`` gates each day: rerunning the same command redoes exactly
+    the days that failed. The exit code still has to be non-zero, or the campaign reads
+    as complete when it is not.
+    """
+    dataset = tmp_path / "raw"
+    for day in (15, 16, 17):
+        write_raw(
+            dataset,
+            [Obs(0.0, "wxt.env.temp", 21.0)],
+            day=datetime(2025, 12, day, tzinfo=timezone.utc),
+        )
+    corrupt = next(dataset.glob(f"facts/sensor={SENSOR}/vsn={VSN}/*/date=2025-12-16/*.parquet"))
+    corrupt.write_bytes(b"this is not a parquet file")
+    config = tmp_path / "pipeline.yaml"
+    config.write_text(
+        f"output:\n  root: {tmp_path / 'out'}\n"
+        f"execution:\n  threads: 2\n  memory_limit: 1GB\n  temp_dir: {tmp_path / 'scratch'}\n"
+    )
+
+    exit_code = main(
+        [
+            "run",
+            "--vsn", VSN,
+            "--start", "2025-12-15",
+            "--end", "2025-12-17",
+            "--dataset", str(dataset),
+            "--config", str(config),
+            "--quiet",
+        ]
+    )
+
+    assert exit_code != 0
+    # _success.json is the only thing that marks a day as done, so it is the only thing
+    # worth asserting on: the bad day must not carry one, and must be rerunnable.
+    out = tmp_path / "out" / SENSOR / VSN
+    assert sorted(p.parent.name for p in out.glob(f"*/{SUCCESS_NAME}")) == [
+        "2025-12-15",
+        "2025-12-17",
+    ]
+
+    captured = capsys.readouterr()
+    reported = [json.loads(line) for line in captured.out.splitlines()]
+    assert {r["date"]: r["status"] for r in reported} == {
+        "2025-12-15": "success",
+        "2025-12-16": "failed",
+        "2025-12-17": "success",
+    }
+    assert "2025-12-16" in captured.err
+
+
 def test_explain_reports_a_plan_without_publishing(workspace, capsys):
     exit_code = main(
         [

@@ -187,6 +187,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"startup timings for {args.vsn}", file=sys.stderr)
         print(watch.table(), file=sys.stderr)
 
+    failed = 0
     for record, day_watch in run_vsn(
         vsn=args.vsn,
         start=args.start,
@@ -204,9 +205,16 @@ def main(argv: list[str] | None = None) -> int:
         # Flushed per day so a redirected log stays live for hours-long jobs instead of
         # arriving in 8 KiB blocks.
         sys.stdout.flush()
+        failed += record["status"] != "success"
         if not args.quiet:
             print(f"phase timings for {args.vsn} {record['date']}", file=sys.stderr)
             print(day_watch.table(), file=sys.stderr)
+
+    if failed:
+        # The job kept going past the bad days, so the exit code is the only thing left
+        # that can stop a campaign script from reading this as complete.
+        print(f"{args.vsn}: {failed} day(s) failed", file=sys.stderr)
+        return 1
     return 0
 
 
