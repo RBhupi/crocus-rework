@@ -179,8 +179,8 @@ def run_work_unit(
 def run_vsn(
     *,
     vsn: str,
-    start: Date,
-    end: Date,
+    start: Date | None = None,
+    end: Date | None = None,
     dataset_root: Path,
     config: PipelineConfig,
     profile: SensorProfile,
@@ -189,6 +189,9 @@ def run_vsn(
     sql_profile: bool = False,
 ) -> Iterator[tuple[dict[str, Any], Stopwatch]]:
     """Reduce every UTC day from ``start`` to ``end``, inclusive, for one VSN.
+
+    Either end of the range may be omitted, in which case the VSN's own date partitions
+    supply it -- see ``_resolve_range``.
 
     A job is a VSN, not a day. A station carries on the order of 600 days, and a process
     per station-day would be that many interpreter and DuckDB startups for SLURM to
@@ -206,6 +209,7 @@ def run_vsn(
     alongside the record because it outlives it -- the provenance write is still running
     when the record it writes is serialised, so that phase can only be reported here.
     """
+    start, end = _resolve_range(vsn, start, end, dataset_root)
     day = start
     while day <= end:
         if _skip_empty_day(vsn, day, dataset_root):
@@ -226,6 +230,26 @@ def run_vsn(
         )
         yield record, watch
         day += timedelta(days=1)
+
+
+def _resolve_range(
+    vsn: str, start: Date | None, end: Date | None, dataset_root: Path
+) -> tuple[Date, Date]:
+    """Fill in either end of the range from the VSN's own date partitions.
+
+    The usual campaign case is "this whole station", and nobody remembers a station's
+    install date. A range guessed wide enough to be safe spends the difference skipping
+    days, and one guessed too narrow silently truncates the station. The dataset already
+    holds the answer, so one listing of this VSN's date partitions gives its true span.
+
+    That listing is done once per job, not once per day, and it is also the only check
+    that the VSN exists at all: ``discover_work_units`` raises for a named VSN that
+    matches nothing, which is what a typo in a campaign script looks like.
+    """
+    if start is not None and end is not None:
+        return start, end
+    days = [day for _, day in discover_work_units(dataset_root, vsns=[vsn])]
+    return start or min(days), end or max(days)
 
 
 def _skip_empty_day(vsn: str, day: Date, dataset_root: Path) -> bool:

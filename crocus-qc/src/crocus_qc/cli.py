@@ -90,9 +90,15 @@ def build_parser() -> argparse.ArgumentParser:
     run = sub.add_parser("run", help="produce the 10-second product for one VSN's days")
     run.add_argument("--vsn", required=True, help="e.g. W08D")
     run.add_argument(
-        "--start", required=True, type=_iso_date, help="first UTC day, inclusive"
+        "--start",
+        type=_iso_date,
+        help="first UTC day, inclusive; default: this VSN's earliest day in the dataset",
     )
-    run.add_argument("--end", required=True, type=_iso_date, help="last UTC day, inclusive")
+    run.add_argument(
+        "--end",
+        type=_iso_date,
+        help="last UTC day, inclusive; default: this VSN's latest day in the dataset",
+    )
     _add_io_args(run)
     run.add_argument(
         "--force", action="store_true", help="recompute even if _success.json is present"

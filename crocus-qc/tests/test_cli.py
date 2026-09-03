@@ -185,6 +185,41 @@ def test_a_day_with_no_raw_data_leaves_no_trace(tmp_path, capsys):
     assert "date=2025-12-16" in captured.err
 
 
+def test_without_a_range_the_vsn_supplies_its_own(tmp_path, capsys):
+    """No dates means "everything this station has", which is the usual campaign case.
+
+    An operator running a whole station does not know its install date, and a range
+    guessed wide enough to be safe spends the difference skipping days. The dataset
+    already knows: one listing of the VSN's date partitions gives the true span.
+    """
+    dataset = tmp_path / "raw"
+    for day in (14, 16, 19):
+        write_raw(
+            dataset,
+            [Obs(0.0, "wxt.env.temp", 21.0)],
+            day=datetime(2025, 12, day, tzinfo=timezone.utc),
+        )
+    config = tmp_path / "pipeline.yaml"
+    config.write_text(
+        f"output:\n  root: {tmp_path / 'out'}\n"
+        f"execution:\n  threads: 2\n  memory_limit: 1GB\n  temp_dir: {tmp_path / 'scratch'}\n"
+    )
+
+    exit_code = main(
+        [
+            "run",
+            "--vsn", VSN,
+            "--dataset", str(dataset),
+            "--config", str(config),
+            "--quiet",
+        ]
+    )
+
+    assert exit_code == 0
+    produced = sorted(p.name for p in (tmp_path / "out" / SENSOR / VSN).iterdir())
+    assert produced == ["2025-12-14", "2025-12-16", "2025-12-19"]
+
+
 def test_explain_reports_a_plan_without_publishing(workspace, capsys):
     exit_code = main(
         [
