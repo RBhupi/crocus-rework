@@ -7,7 +7,13 @@ output:
   root: /nfs/gce/projects/crocus-server-admins/data-rework/crocus-qc-output/10sec-v0.1.0
 
 execution:
-  # Leave threads and memory_limit unset to inherit the SLURM allocation:
+  # With no scheduler (sbatch was not available on compute-386-07), set these
+  # explicitly: threads would otherwise default to every core on the node, which is
+  # wrong as soon as run_manifest.sh runs more than one work unit at a time.
+  threads: 8
+  memory_limit: 4GB
+
+  # Leave threads and memory_limit unset to inherit the SLURM allocation instead:
   #   threads      <- SLURM_CPUS_PER_TASK
   #   memory_limit <- 80% of SLURM_MEM_PER_NODE (headroom for the Python process)
   #   temp_dir     <- $TMPDIR, else $SCRATCH, else /tmp

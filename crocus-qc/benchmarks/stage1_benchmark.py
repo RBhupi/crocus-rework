@@ -40,8 +40,8 @@ CASES = {
 def synthesise(root: Path, profile, sensor: str, vsn: str, hz: float, threads: int) -> int:
     """Write one Hive partition of long-format facts, entirely inside DuckDB."""
     partition = (
-        root / f"sensor={sensor}" / f"vsn={vsn}" / f"instrument={profile.instrument_label}"
-        / f"date={DAY:%Y-%m-%d}"
+        root / "facts" / f"sensor={sensor}" / f"vsn={vsn}"
+        / f"instrument={profile.instrument_label}" / f"date={DAY:%Y-%m-%d}"
     )
     partition.mkdir(parents=True, exist_ok=True)
     target = partition / "part-0.parquet"

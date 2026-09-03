@@ -25,7 +25,7 @@ import duckdb
 from . import __version__
 from .config import TEN_SECONDS, AggregationPeriod, PipelineConfig, SensorProfile
 from .provenance import SUCCESS_NAME, git_commit, read_provenance, write_json_atomic
-from .reduce import build_stage1_sql, raw_glob, session_setup_sql
+from .reduce import FACTS_DIR, build_stage1_sql, raw_glob, session_setup_sql
 from .timing import Stopwatch
 
 PRODUCT_NAME = "10sec.parquet"
@@ -227,7 +227,7 @@ def discover_work_units(
     """
     root = dataset_root.expanduser()
     units: set[tuple[str, str, Date]] = set()
-    pattern = f"sensor={sensor or '*'}/vsn={vsn or '*'}/instrument=*/date=*"
+    pattern = f"{FACTS_DIR}/sensor={sensor or '*'}/vsn={vsn or '*'}/instrument=*/date=*"
     for path in root.glob(pattern):
         if not path.is_dir():
             continue

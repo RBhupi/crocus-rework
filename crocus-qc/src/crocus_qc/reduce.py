@@ -51,15 +51,24 @@ def session_setup_sql(threads: int, memory_limit: str, temp_dir: str) -> str:
     )
 
 
+#: The subdirectory of a dataset version root that holds the Hive-partitioned facts.
+#:
+#: ``--dataset`` names the version root (``.../wxt-aqt-production-v5``) rather than the
+#: facts directory itself, for two reasons: it is the path every other document and
+#: config in this project already writes, and it makes the "never write inside the raw
+#: dataset" guard cover the whole versioned tree instead of only its facts subtree.
+FACTS_DIR = "facts"
+
+
 def raw_glob(dataset_root: str, sensor: str, vsn: str, day: Date) -> str:
-    """Hive path for exactly one work unit.
+    """Hive path for exactly one work unit, under a dataset version root.
 
     Every partition key is pinned except ``instrument``, which is an artefact of the
     ingest layout rather than part of the work unit. Naming the path this precisely is
     the strongest possible partition pruning: DuckDB opens only these files.
     """
     return (
-        f"{dataset_root.rstrip('/')}/sensor={sensor}/vsn={vsn}"
+        f"{dataset_root.rstrip('/')}/{FACTS_DIR}/sensor={sensor}/vsn={vsn}"
         f"/instrument=*/date={day:%Y-%m-%d}/*.parquet"
     )
 

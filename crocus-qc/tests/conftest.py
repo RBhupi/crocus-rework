@@ -112,8 +112,11 @@ def write_raw(
         schema=fact_schema(),
     )
 
+    # Mirrors the production tree exactly, including the ``facts/`` level that sits
+    # between the dataset version root and the Hive keys.
     partition = (
         root
+        / "facts"
         / f"sensor={sensor}"
         / f"vsn={vsn}"
         / f"instrument={instrument}"

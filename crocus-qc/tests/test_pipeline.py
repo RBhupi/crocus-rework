@@ -117,6 +117,20 @@ def test_product_rows_are_written_in_time_order(config, profile, dataset):
     assert times == sorted(times)
 
 
+def test_the_input_glob_addresses_the_production_facts_layout(config, profile, dataset):
+    """``--dataset`` is the version root; the facts live one level below it.
+
+    Getting this wrong is silent on synthetic fixtures and finds zero files in
+    production, so the exact shape is pinned here.
+    """
+    record = run(config, profile, dataset)
+
+    assert record["input_glob"] == (
+        f"{dataset}/facts/sensor={SENSOR}/vsn={VSN}"
+        f"/instrument=*/date={DAY:%Y-%m-%d}/*.parquet"
+    )
+
+
 def test_provenance_records_what_produced_the_file(config, profile, dataset):
     record = run(config, profile, dataset)
 
