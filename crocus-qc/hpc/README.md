@@ -32,11 +32,30 @@ existing one.
 
 ## 1. Install
 
+**There is no `python3.12` on the GCE compute nodes.** The system packages are 3.10 and
+3.11; the 3.12 the earlier stages used lives inside an environment, not on `PATH`. Find
+one before creating anything:
+
 ```bash
 BASE=/nfs/gce/projects/crocus-server-admins/data-rework
-python3.12 -m venv "$BASE/envs/crocus-qc"
+for p in "$BASE"/envs/*/bin/python; do printf '%-60s ' "$p"; "$p" -V 2>&1; done
+```
+
+`envs/adqat-braut` is the one the ADQAT handoff pins to 3.12. Use its interpreter as the
+base of a fresh venv — a separate environment, so a `crocus-qc` dependency can never
+perturb a working ADQAT install:
+
+```bash
+"$BASE/envs/adqat-braut/bin/python" -m venv "$BASE/envs/crocus-qc"
 "$BASE/envs/crocus-qc/bin/pip" install -e "$BASE/crocus-rework/crocus-qc"
 "$BASE/envs/crocus-qc/bin/crocus-qc" profiles
+```
+
+If no 3.12 turns up, create one with micromamba, which is how the `data` environment was
+built (`HANDOVER.md`):
+
+```bash
+micromamba create -y -p "$BASE/envs/crocus-qc" python=3.12
 ```
 
 Two runtime dependencies (`duckdb`, `PyYAML`), Python 3.12+.
