@@ -156,10 +156,14 @@ def _aggregation_block(spec: VariableSpec) -> list[str]:
         columns.insert(
             0, f"((DEGREES(ATAN2({sin_mean}, {cos_mean})) % 360.0) + 360.0) % 360.0 AS {name}"
         )
-        # Circular standard deviation from the mean resultant length R. As directions
-        # cancel R tends to 0 and the spread diverges; GREATEST guards LN(0).
+        # Circular standard deviation from the mean resultant length R. R is bounded by
+        # [0, 1] by definition, but neither bound survives floating point: as directions
+        # cancel R tends to 0 and LN(0) diverges, and summing many identical unit vectors
+        # rounds R to 1 + 2e-16, which makes -2*LN(R) negative and SQRT raise. LEAST caps
+        # R at 1 (a calm bucket has zero spread) and GREATEST floors it above 0.
+        r_clamped = f"GREATEST(LEAST({resultant}, 1.0), 1e-15)"
         columns.append(
-            f"{_spread(where, f'DEGREES(SQRT(-2.0 * LN(GREATEST({resultant}, 1e-15))))')} "
+            f"{_spread(where, f'DEGREES(SQRT(-2.0 * LN({r_clamped})))')} "
             f"AS {name}_raw_std"
         )
     elif spec.aggregation == "mode":

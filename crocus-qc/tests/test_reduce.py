@@ -286,6 +286,24 @@ def test_single_direction_has_no_circular_spread(tmp_path, wxt_profile):
     assert first["wind_direction_raw_std"] is None
 
 
+def test_many_identical_directions_do_not_overflow_the_resultant(tmp_path, wxt_profile):
+    """A bucket of identical directions has zero spread, not a domain error.
+
+    The mean resultant length R is bounded by 1 by definition, but floating-point
+    summation of many identical unit vectors rounds it to 1 + 2e-16. That makes
+    ``LN(R)`` positive, ``-2*LN(R)`` negative, and ``SQRT`` of a negative number an
+    ``OutOfRangeException`` -- which is exactly how a full station run died on a calm
+    10-second bucket (W069, 2025-02-11 at 17.4 degrees). Angle and count here are chosen
+    to land R just above 1.0; the honest answer is zero angular spread.
+    """
+    obs = [Obs(round(i * 0.1, 1), WDIR, 17.4) for i in range(100)]
+    rows = run_stage1(tmp_path, obs, subset(wxt_profile, ["wind_direction"]))
+    first = bucket(rows, 0)
+    assert first["wind_direction_n_samples"] == 100
+    assert circular_distance(first["wind_direction"], 17.4) < 1e-6
+    assert abs(first["wind_direction_raw_std"]) < 1e-9
+
+
 def test_mode_aggregation(tmp_path, wxt_profile):
     rows = run_stage1(
         tmp_path,
