@@ -134,6 +134,57 @@ def test_run_prints_one_json_record_per_line(tmp_path, capsys):
     assert [json.loads(line)["date"] for line in lines] == ["2025-12-14", "2025-12-15"]
 
 
+def test_a_day_with_no_raw_data_leaves_no_trace(tmp_path, capsys):
+    """A hole in a station's calendar produces nothing at all, and the job carries on.
+
+    Stations go down, get redeployed, and predate their own installation date, so a
+    range always spans days with no raw partitions. Writing an all-NULL 8640-row
+    product for those would stamp ``_success.json`` on a day that carries no
+    observation, and downstream nothing could then tell an outage from a quiet day.
+    Absence of a file has to mean absence of data.
+    """
+    dataset = tmp_path / "raw"
+    for day in (15, 17):
+        write_raw(
+            dataset,
+            [Obs(0.0, "wxt.env.temp", 21.0)],
+            day=datetime(2025, 12, day, tzinfo=timezone.utc),
+        )
+    config = tmp_path / "pipeline.yaml"
+    config.write_text(
+        f"output:\n  root: {tmp_path / 'out'}\n"
+        f"execution:\n  threads: 2\n  memory_limit: 1GB\n  temp_dir: {tmp_path / 'scratch'}\n"
+    )
+
+    exit_code = main(
+        [
+            "run",
+            "--vsn", VSN,
+            "--start", "2025-12-15",
+            "--end", "2025-12-17",
+            "--dataset", str(dataset),
+            "--config", str(config),
+            "--quiet",
+        ]
+    )
+
+    # The gap is not a failure: the range is the operator's guess at the calendar, and
+    # the days that exist are the answer.
+    assert exit_code == 0
+    produced = sorted(p.name for p in (tmp_path / "out" / SENSOR / VSN).iterdir())
+    assert produced == ["2025-12-15", "2025-12-17"]
+
+    captured = capsys.readouterr()
+    assert [json.loads(line)["date"] for line in captured.out.splitlines()] == [
+        "2025-12-15",
+        "2025-12-17",
+    ]
+    # Skipped days are still reported, with the glob that found nothing -- a whole
+    # range skipped silently is what a wrong --dataset looks like.
+    assert "2025-12-16" in captured.err
+    assert "date=2025-12-16" in captured.err
+
+
 def test_explain_reports_a_plan_without_publishing(workspace, capsys):
     exit_code = main(
         [

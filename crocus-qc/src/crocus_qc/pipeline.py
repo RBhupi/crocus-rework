@@ -16,9 +16,11 @@ on the cluster can be diagnosed from its output directory alone.
 from __future__ import annotations
 
 import os
+import sys
 from collections.abc import Iterator, Sequence
 from datetime import date as Date
 from datetime import datetime, timedelta, timezone
+from glob import iglob
 from pathlib import Path
 from typing import Any
 
@@ -206,6 +208,9 @@ def run_vsn(
     """
     day = start
     while day <= end:
+        if _skip_empty_day(vsn, day, dataset_root):
+            day += timedelta(days=1)
+            continue
         watch = Stopwatch()
         record = run_work_unit(
             sensor=SENSOR,
@@ -221,6 +226,31 @@ def run_vsn(
         )
         yield record, watch
         day += timedelta(days=1)
+
+
+def _skip_empty_day(vsn: str, day: Date, dataset_root: Path) -> bool:
+    """Whether this day has no raw files, reporting it on stderr if so.
+
+    A station's calendar has holes -- outages, redeployments, days before the
+    instrument was installed -- so any range worth running spans days with no
+    partitions at all. Those produce nothing: no directory, no product, no
+    ``_success.json``. An all-NULL 8640-row product would stamp success on a day that
+    carries no observation, and downstream nothing could then tell an outage from a
+    quiet day. Absence of a file means absence of data.
+
+    The skip is still announced, with the glob that found nothing, because a whole
+    range skipped in silence is exactly what a plausible-but-wrong ``--dataset`` looks
+    like. It goes to stderr rather than into the yielded stream: stdout is the JSONL
+    record of what was *produced*, and a day that produced nothing does not belong in it.
+
+    This costs one directory listing per day, against a reduction that takes about a
+    second -- and it is the same listing DuckDB would do before raising instead.
+    """
+    searched = raw_glob(str(dataset_root), SENSOR, vsn, day)
+    if next(iglob(searched), None) is not None:
+        return False
+    print(f"skipping {vsn} {day:%Y-%m-%d}: no raw files match {searched}", file=sys.stderr)
+    return True
 
 
 def explain_work_unit(
