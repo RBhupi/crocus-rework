@@ -31,7 +31,9 @@ echo "dataset: $DATASET"
 echo "config:  $CONFIG"
 echo
 
-# What is actually there. Cheap: directory names only, no Parquet is opened.
+# What is actually there. Cheap: directory names only, no Parquet is opened. Under
+# `set -e` this doubles as input validation: `discover` exits non-zero when a day matches
+# nothing, so a mistyped or empty day aborts here rather than after the first run.
 echo "--- work units available for these days ---"
 for day in "$@"; do
     crocus-qc discover --dataset "$DATASET" --start "$day" --end "$day"
